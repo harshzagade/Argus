@@ -1,0 +1,18 @@
+- id: ARG-1004
+  name: Sudoers configuration modified
+  description: /etc/sudoers or a file under /etc/sudoers.d was created or modified. Attackers and rogue administrators use sudoers changes for persistent privilege escalation.
+  severity: high
+  mitre: [T1548.003, T1222.002]
+  compliance:
+    pci_dss: ["11.5.1", "10.2.4"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["SI-7", "CM-6"]
+  source: fim
+  match:
+    all:
+      - {field: "event.path", regex: '^/etc/sudoers(\.d/.*)?$'}
+      - {field: "event.action", in: ["created", "modified"]}
+  entities: ["event.path", "event.user"]
+  title: "Sudoers file changed on {agent_id}: {event.path}"
+  playbook: snapshot-evidence
+  ai_triage: true

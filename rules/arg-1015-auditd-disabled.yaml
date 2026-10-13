@@ -1,0 +1,18 @@
+- id: ARG-1015
+  name: Audit daemon disabled or stopped
+  description: The Linux audit daemon (auditd) was stopped, halted or disabled. Disabling host auditing is a defense-evasion step that usually precedes destructive or stealthy actions.
+  severity: critical
+  mitre: [T1562.001]
+  compliance:
+    pci_dss: ["10.2.4", "10.3.2"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["AU-2", "SI-4"]
+  source: syslog
+  match:
+    all:
+      - {field: "event.program", equals: "auditd"}
+      - {field: "event.message", regex: '(stop|halt|disabled|terminat|exit)'}
+  entities: ["event.message"]
+  title: "Audit daemon stopped on {agent_id}"
+  playbook: snapshot-evidence
+  ai_triage: true

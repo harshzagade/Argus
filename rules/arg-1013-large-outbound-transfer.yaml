@@ -1,0 +1,18 @@
+- id: ARG-1013
+  name: Large outbound data transfer
+  description: A single outbound network flow moved more than 100 MB of data. Possible bulk data exfiltration to an external host.
+  severity: high
+  mitre: [T1048, T1041]
+  compliance:
+    pci_dss: ["10.2.4"]
+    gdpr: ["Art.32", "Art.33"]
+    nist_800_53: ["SI-4", "SC-7"]
+  source: network
+  match:
+    all:
+      - {field: "event.direction", equals: "outbound"}
+      - {field: "event.bytes", gte: 100000000}
+  entities: ["event.dst_ip", "event.dst_port", "event.bytes"]
+  title: "Large outbound transfer ({event.bytes} bytes) to {event.dst_ip} from {agent_id}"
+  playbook: isolate-host
+  ai_triage: true

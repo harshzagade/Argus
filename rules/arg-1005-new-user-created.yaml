@@ -1,0 +1,16 @@
+- id: ARG-1005
+  name: New local user account created
+  description: A new local user account was created (useradd/adduser or equivalent log message). Unexpected new accounts are a classic persistence and lateral-movement primitive.
+  severity: medium
+  mitre: [T1136.001]
+  compliance:
+    pci_dss: ["10.2.4"]
+    nist_800_53: ["AC-2", "AU-2"]
+  source: syslog
+  match:
+    any:
+      - {field: "event.program", in: ["useradd", "adduser"]}
+      - {field: "event.message", regex: '(new user|new account).*(added|created)'}
+  entities: ["event.message"]
+  title: "New user account created on {agent_id}"
+  ai_triage: true

@@ -1,0 +1,18 @@
+- id: ARG-1016
+  name: Security logs cleared or truncated
+  description: Evidence of log deletion or truncation under /var/log (rm, shred, truncate, shell redirection) or shell history wiping. Classic indicator-removal behavior.
+  severity: high
+  mitre: [T1070, T1070.004]
+  compliance:
+    pci_dss: ["10.2.4", "10.3.2"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["AU-2", "AU-9"]
+  source: syslog
+  match:
+    any:
+      - {field: "event.message", regex: '(rm\s+(-f\s+)?|shred\s+|truncate\s+.*-s\s*0\s+|>\s*|cat\s+/dev/null\s*>\s*)/var/log'}
+      - {field: "event.message", regex: 'history\s+-c'}
+  entities: ["event.message"]
+  title: "Log clearing activity detected on {agent_id}"
+  playbook: snapshot-evidence
+  ai_triage: true

@@ -1,0 +1,20 @@
+- id: ARG-1028
+  name: SSH login at unusual hour
+  description: A successful SSH login occurred between 22:00 and 06:00 local server time. Off-hours interactive logins are rare on most estates and a classic indicator of compromised credentials or unauthorized remote access.
+  severity: medium
+  mitre: [T1078]
+  compliance:
+    pci_dss: ["10.2.4"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["AU-2", "AC-2"]
+  source: auth
+  match:
+    all:
+      - {field: "event.service", equals: "sshd"}
+      - {field: "event.result", equals: "success"}
+    any:
+      - {field: "event.hour", lt: 6}
+      - {field: "event.hour", gte: 22}
+  entities: ["event.user", "event.src_ip"]
+  title: "Off-hours SSH login on {agent_id}: {event.user} from {event.src_ip}"
+  ai_triage: true

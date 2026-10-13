@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Argus — Security Operations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="themes.css">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('argus_theme')||'light';}catch(e){}</script>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ Sidebar ============ -->
+  <aside class="sidebar" aria-label="Primary">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>
+        </svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-name">Argus</span>
+        <span class="brand-tag">Security Operations</span>
+      </span>
+    </div>
+
+    <nav class="side-nav" id="viewsNav" aria-label="Views">
+      <div class="nav-section">Monitor</div>
+      <button class="nav-btn active" data-view="overview">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span class="nav-label">Overview</span>
+      </button>
+      <button class="nav-btn" data-view="alerts">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        <span class="nav-label">Alerts</span><span class="nav-badge" id="navAlertCount"></span>
+      </button>
+      <button class="nav-btn" data-view="incidents">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        <span class="nav-label">Cases</span><span class="nav-badge" id="navIncCount"></span>
+      </button>
+      <div class="nav-section">Manage</div>
+      <button class="nav-btn" data-view="agents">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+        <span class="nav-label">Devices</span>
+      </button>
+      <button class="nav-btn" data-view="coverage">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span class="nav-label">Coverage</span>
+      </button>
+      <button class="nav-btn" data-view="rules">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        <span class="nav-label">Rules</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="env-card">
+        <span class="env-dot"></span>
+        <span class="env-text"><strong>Lab environment</strong><span>Single node</span></span>
+      </div>
+      <div class="ver">Argus v0.1</div>
+    </div>
+  </aside>
+
+  <!-- ============ Main column ============ -->
+  <div class="main-col">
+
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="crumb">Security Operations</span>
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <span class="crumb-current" id="crumbCurrent">Overview</span>
+      </div>
+      <button id="paletteTrigger" class="palette-trigger" aria-label="Search (Ctrl+K)">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <span>Search alerts, cases, rules…</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+      <div class="topbar-right">
+        <span id="connPill" class="pill reconnecting"><span class="dot"></span><span id="connText">CONNECTING</span></span>
+        <div class="notif-wrap">
+          <button id="notifBtn" class="icon-btn" title="Notifications" aria-label="Notifications" aria-haspopup="true">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            <span class="notif-badge" id="notifBadge" hidden></span>
+          </button>
+          <div class="notif-dropdown" id="notifDropdown" hidden role="menu" aria-label="Notifications">
+            <div class="notif-head"><strong>Notifications</strong><button id="notifClear" class="link-btn">Mark all read</button></div>
+            <div class="notif-list" id="notifList"></div>
+          </div>
+        </div>
+        <button id="themeBtn" class="icon-btn" title="Toggle dark mode" aria-label="Toggle dark mode">
+          <svg class="icon-sun" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>
+        <button id="settingsBtn" class="icon-btn" title="API settings" aria-label="API settings">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="ticker" id="ticker" aria-hidden="true">
+      <div class="ticker-label"><span class="pulse"></span>Live</div>
+      <div class="ticker-viewport"><div class="ticker-track" id="tickerTrack"></div></div>
+    </div>
+
+    <main class="main">
+
+      <!-- OVERVIEW -->
+      <section class="view active" id="view-overview" aria-label="Overview">
+        <div class="page-head">
+          <div><h1>Overview</h1><p>What's happening in your network right now.</p></div>
+        </div>
+        <div class="stat-grid" id="statGrid"></div>
+        <div class="panel-grid overview-grid">
+          <div class="panel wide">
+            <div class="panel-head chart-head">
+              <div class="panel-title">Alert activity</div>
+              <div class="chart-controls">
+                <div class="seg" id="activityRange" role="group" aria-label="Time range">
+                  <button data-days="1">24h</button><button data-days="7">7d</button><button data-days="14" class="active">14d</button><button data-days="30">30d</button>
+                </div>
+                <div class="chart-legend" id="activityLegend"></div>
+              </div>
+            </div>
+            <div id="activityChart"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div class="panel-title">How serious</div></div>
+            <div class="donut-wrap" id="donutWrap"></div>
+            <div class="donut-legend" id="donutLegend"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div class="panel-title">Top rules</div></div>
+            <div class="bar-list" id="topRules"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div class="panel-title">Top attack methods</div></div>
+            <div class="bar-list" id="topMitre"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ALERTS -->
+      <section class="view" id="view-alerts" aria-label="Alerts">
+        <div class="page-head">
+          <div><h1>Alerts</h1><p>Everything Argus has spotted on your devices.</p></div>
+        </div>
+        <div class="toolbar card-bar">
+          <div class="toolbar-left">
+            <select id="alertSevFilter" class="input" aria-label="Filter by level">
+              <option value="">All levels</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+            <input id="alertSearch" class="input search" type="text" placeholder="Search alerts..." aria-label="Search alerts">
+          </div>
+          <div class="toolbar-right">
+            <button class="btn" id="exportCsvBtn" title="Download the filtered alerts as CSV">Export CSV</button>
+            <span class="muted" id="alertCount"></span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="alertsTable">
+            <thead><tr>
+              <th>Level</th><th>When</th><th>Alert</th><th>Rule</th><th>Device</th><th>Details</th>
+            </tr></thead>
+            <tbody id="alertsBody"></tbody>
+          </table>
+          <div class="empty" id="alertsEmpty" hidden>No alerts match the current filters.</div>
+        </div>
+      </section>
+
+      <!-- INCIDENTS -->
+      <section class="view" id="view-incidents" aria-label="Cases">
+        <div class="page-head">
+          <div><h1>Cases</h1><p>Related alerts grouped together so you can work through them.</p></div>
+        </div>
+        <div class="toolbar">
+          <div class="toolbar-left" id="incTabs" role="tablist">
+            <button class="tab active" data-status="">All</button>
+            <button class="tab" data-status="open">Open</button>
+            <button class="tab" data-status="acknowledged">In progress</button>
+            <button class="tab" data-status="closed">Closed</button>
+          </div>
+          <div class="toolbar-right">
+            <div class="bulk-bar" id="bulkBar" hidden>
+              <span class="muted" id="bulkCount"></span>
+              <button class="btn ack" id="bulkAck">Handle</button>
+              <button class="btn close-btn" id="bulkClose">Close</button>
+              <button class="btn" id="bulkClear">Clear</button>
+            </div>
+            <span class="muted" id="incCount"></span>
+          </div>
+        </div>
+        <div class="cards-grid" id="incCards"></div>
+        <div class="empty" id="incEmpty" hidden>No cases here.</div>
+      </section>
+
+      <!-- AGENTS -->
+      <section class="view" id="view-agents" aria-label="Devices">
+        <div class="page-head">
+          <div><h1>Devices</h1><p>Devices with Argus installed and watching.</p></div>
+        </div>
+        <div class="toolbar">
+          <div class="toolbar-left"><span class="muted" id="agentCount"></span></div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="agentsTable">
+            <thead><tr>
+              <th>Status</th><th>Device</th><th>Agent ID</th><th>System</th><th>Version</th><th>Risk</th><th>Last active</th>
+            </tr></thead>
+            <tbody id="agentsBody"></tbody>
+          </table>
+          <div class="empty" id="agentsEmpty" hidden>No devices connected yet.</div>
+        </div>
+      </section>
+
+      <!-- COVERAGE -->
+      <section class="view" id="view-coverage" aria-label="Coverage">
+        <div class="page-head">
+          <div><h1>Coverage</h1><p>The attack methods Argus can catch.</p></div>
+        </div>
+        <div class="panel heatmap-panel">
+          <div class="panel-head chart-head">
+            <div class="panel-title">Attack map</div>
+            <div class="heatmap-scale"><span>Few alerts</span><span class="scale-bar"></span><span>Lots of alerts</span></div>
+          </div>
+          <div class="heatmap" id="attackHeatmap"></div>
+        </div>
+        <div class="toolbar card-bar">
+          <div class="toolbar-left">
+            <span class="coverage-stat"><strong id="covTechCount">0</strong> attack methods watched</span>
+            <span class="muted">by</span>
+            <span class="coverage-stat"><strong id="covRuleCount">0</strong> rules</span>
+          </div>
+          <div class="toolbar-right">
+            <input id="covSearch" class="input search" type="text" placeholder="Search attack method or rule..." aria-label="Filter coverage">
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="coverageTable">
+            <thead><tr><th>Attack method</th><th>Rules watching it</th><th>Count</th></tr></thead>
+            <tbody id="coverageBody"></tbody>
+          </table>
+          <div class="empty" id="coverageEmpty" hidden>No coverage data available.</div>
+        </div>
+      </section>
+
+      <!-- RULES -->
+      <section class="view" id="view-rules" aria-label="Rules">
+        <div class="page-head">
+          <div><h1>Rules</h1><p>The checks Argus runs on your devices, day and night.</p></div>
+        </div>
+        <div class="toolbar card-bar">
+          <div class="toolbar-left"><span class="muted" id="ruleCount"></span></div>
+          <div class="toolbar-right">
+            <input id="ruleSearch" class="input search" type="text" placeholder="Filter rules..." aria-label="Filter rules">
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="rulesTable">
+            <thead><tr><th>Rule</th><th>What it checks</th><th>Level</th><th>Attack</th><th>Type</th></tr></thead>
+            <tbody id="rulesBody"></tbody>
+          </table>
+          <div class="empty" id="rulesEmpty" hidden>No rules loaded.</div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- Command palette -->
+<div class="modal-overlay palette-overlay" id="paletteOverlay" hidden>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="Search">
+    <div class="palette-input-wrap">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="paletteInput" class="palette-input" type="text" placeholder="Search alerts, incidents, rules, agents, views…" autocomplete="off" spellcheck="false" aria-label="Search">
+    </div>
+    <div class="palette-results" id="paletteResults"></div>
+    <div class="palette-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+  </div>
+</div>
+
+<!-- Detail drawer -->
+<div class="drawer-overlay" id="drawerOverlay" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="Detail panel">
+  <button class="drawer-close icon-btn" id="drawerClose" aria-label="Close panel">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+  </button>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+
+<!-- Toasts -->
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<!-- Settings modal -->
+<div class="modal-overlay" id="settingsOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="API settings">
+    <div class="modal-title">API settings</div>
+    <p class="muted small">The dashboard talks to the Argus server using an API key, sent with every request. It's saved in this browser only.</p>
+    <label class="field-label" for="apiKeyInput">API key</label>
+    <input id="apiKeyInput" class="input full" type="text" autocomplete="off" spellcheck="false">
+    <div class="modal-actions">
+      <button class="btn primary" id="saveKeyBtn">Save &amp; reconnect</button>
+    </div>
+    <p class="muted tiny">Default for local demos: <code>argus-dev-key</code></p>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

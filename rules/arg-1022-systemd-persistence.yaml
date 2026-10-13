@@ -1,0 +1,18 @@
+- id: ARG-1022
+  name: Systemd persistence service created
+  description: A new .service unit file appeared in /etc/systemd/system. Systemd services are a primary Linux persistence mechanism for malware and backdoors.
+  severity: high
+  mitre: [T1543.002]
+  compliance:
+    pci_dss: ["11.5.1"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["SI-7", "CM-6"]
+  source: fim
+  match:
+    all:
+      - {field: "event.path", regex: '^/etc/systemd/system/.*\.service$'}
+      - {field: "event.action", equals: "created"}
+  entities: ["event.path", "event.user"]
+  title: "New systemd service installed on {agent_id}: {event.path}"
+  playbook: snapshot-evidence
+  ai_triage: true

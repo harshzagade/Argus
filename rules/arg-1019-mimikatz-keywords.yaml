@@ -1,0 +1,20 @@
+- id: ARG-1019
+  name: Credential dumping tool keywords
+  description: Syslog contains keywords of credential-dumping tooling (mimikatz, sekurlsa, lsadump, SafetyKatz). Indicates LSASS or credential-theft activity, including against Windows-style workloads forwarding to syslog.
+  severity: critical
+  mitre: [T1003.001, T1003]
+  compliance:
+    pci_dss: ["10.2.4", "12.10.1"]
+    gdpr: ["Art.32", "Art.33"]
+    nist_800_53: ["SI-4", "IR-4"]
+  source: syslog
+  match:
+    any:
+      - {field: "event.message", contains: "mimikatz"}
+      - {field: "event.message", contains: "sekurlsa"}
+      - {field: "event.message", contains: "lsadump"}
+      - {field: "event.message", contains: "SafetyKatz"}
+  entities: ["event.message"]
+  title: "Credential-dumping tool keyword seen on {agent_id}"
+  playbook: isolate-host
+  ai_triage: true

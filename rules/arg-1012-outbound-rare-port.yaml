@@ -1,0 +1,19 @@
+- id: ARG-1012
+  name: Outbound connection to uncommon port
+  description: Repeated outbound connections to a port outside the common service set. Possible command-and-control beaconing or protocol tunneling. Thresholded to reduce noise from one-off connections.
+  severity: medium
+  mitre: [T1071]
+  compliance:
+    pci_dss: ["10.2.4"]
+    nist_800_53: ["SC-7", "SI-4"]
+  source: network
+  match:
+    all:
+      - {field: "event.direction", equals: "outbound"}
+      - {field: "event.dst_port", not_in: [21, 22, 25, 53, 80, 110, 123, 143, 389, 443, 465, 587, 636, 993, 995, 1433, 1521, 3306, 3389, 5432, 5672, 6379, 6443, 8000, 8080, 8443, 9000, 9090, 9200, 27017]}
+  group_by: ["agent_id", "event.dst_ip", "event.dst_port"]
+  threshold: {count: 10, window: 600}
+  cooldown: 1800
+  entities: ["event.dst_ip", "event.dst_port"]
+  title: "Outbound connections to uncommon port {event.dst_port} on {event.dst_ip} from {agent_id}"
+  ai_triage: true

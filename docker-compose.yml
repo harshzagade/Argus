@@ -1,0 +1,40 @@
+services:
+  argus:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "8000:8000"
+    volumes:
+      - argus-data:/data
+    environment:
+      ARGUS_API_KEY: ${ARGUS_API_KEY:-argus-dev-key}
+      # Optional real intel + LLM triage (else offline mock + heuristic):
+      # ABUSEIPDB_KEY: ${ABUSEIPDB_KEY:-}
+      # VT_KEY: ${VT_KEY:-}
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # Demo: replays attack scenarios against the server. Run on demand:
+  #   docker compose --profile demo up simulator
+  simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    profiles: ["demo"]
+    depends_on:
+      argus:
+        condition: service_healthy
+    environment:
+      ARGUS_SERVER: http://argus:8000
+      ARGUS_API_KEY: ${ARGUS_API_KEY:-argus-dev-key}
+    command: >
+      bash -c "python simulator/simulate.py --server http://argus:8000 --all"
+
+volumes:
+  argus-data:

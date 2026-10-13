@@ -1,0 +1,20 @@
+- id: ARG-1002
+  name: SSH successful login after brute force
+  description: A successful SSH login occurred on a host that recently raised brute-force alerts. The server correlates this alert with a preceding ARG-1001 alert (same agent_id and source IP within 30 minutes) into a single incident, which confirms a likely compromised account. Tune the cooldown to the site's baseline of legitimate SSH logins.
+  severity: critical
+  mitre: [T1110.001, T1078]
+  compliance:
+    pci_dss: ["8.3.6", "10.2.4", "12.10.1"]
+    gdpr: ["Art.32", "Art.33"]
+    nist_800_53: ["AC-7", "IR-4"]
+  source: auth
+  match:
+    all:
+      - {field: "event.service", equals: "sshd"}
+      - {field: "event.result", equals: "success"}
+  group_by: ["agent_id", "event.src_ip"]
+  cooldown: 3600
+  entities: ["event.src_ip", "event.user"]
+  title: "Successful SSH login for {event.user} from {event.src_ip} on {agent_id} (possible post-brute-force compromise)"
+  playbook: isolate-host
+  ai_triage: true

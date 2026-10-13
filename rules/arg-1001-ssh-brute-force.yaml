@@ -1,0 +1,21 @@
+- id: ARG-1001
+  name: SSH brute force
+  description: Five or more failed SSH authentication attempts from a single source IP within five minutes. Indicates password-guessing activity against the SSH service.
+  severity: high
+  mitre: [T1110.001]
+  compliance:
+    pci_dss: ["8.3.6", "10.2.4"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["AC-7", "SI-4"]
+  source: auth
+  match:
+    all:
+      - {field: "event.service", equals: "sshd"}
+      - {field: "event.result", equals: "failed"}
+  group_by: ["agent_id", "event.src_ip"]
+  threshold: {count: 5, window: 300}
+  cooldown: 900
+  entities: ["event.src_ip", "event.user"]
+  title: "SSH brute force from {event.src_ip} against {agent_id}"
+  playbook: block-ssh-bruteforce
+  ai_triage: true

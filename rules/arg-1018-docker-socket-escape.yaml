@@ -1,0 +1,17 @@
+- id: ARG-1018
+  name: Container escape attempt via Docker socket
+  description: A process referenced /var/run/docker.sock in its command line. Accessing the Docker socket from inside a container is the canonical container-escape primitive and grants host-level control.
+  severity: critical
+  mitre: [T1611]
+  compliance:
+    pci_dss: ["11.5.1", "12.10.1"]
+    nist_800_53: ["SI-4", "SC-7"]
+  source: process
+  match:
+    all:
+      - {field: "event.action", equals: "started"}
+      - {field: "event.cmdline", contains: "docker.sock"}
+  entities: ["event.cmdline", "event.user", "event.exe"]
+  title: "Docker socket accessed on {agent_id} by {event.user}"
+  playbook: isolate-host
+  ai_triage: true

@@ -1,0 +1,18 @@
+- id: ARG-1010
+  name: SSH daemon configuration changed
+  description: /etc/ssh/sshd_config was modified or created. Attackers weaken SSH hardening (e.g. PermitRootLogin yes, PasswordAuthentication yes) to guarantee re-entry to the host.
+  severity: high
+  mitre: [T1021.004, T1562.004]
+  compliance:
+    pci_dss: ["11.5.1"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["CM-6", "SI-7"]
+  source: fim
+  match:
+    all:
+      - {field: "event.path", equals: "/etc/ssh/sshd_config"}
+      - {field: "event.action", in: ["modified", "created"]}
+  entities: ["event.path", "event.user"]
+  title: "sshd_config changed on {agent_id}"
+  playbook: snapshot-evidence
+  ai_triage: true
