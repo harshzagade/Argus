@@ -1,0 +1,17 @@
+- id: ARG-1003
+  name: Sudo shell escalation attempt
+  description: A user invoked sudo to run an interactive shell or su (e.g. sudo su, sudo bash). This is a common privilege-escalation step that bypasses per-command auditing.
+  severity: high
+  mitre: [T1548.003]
+  compliance:
+    pci_dss: ["10.2.4"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["AU-2", "SI-4"]
+  source: syslog
+  match:
+    all:
+      - {field: "event.program", equals: "sudo"}
+      - {field: "event.message", regex: 'COMMAND=/(usr/)?s?bin/(su|bash|sh|zsh|dash)'}
+  entities: ["event.message"]
+  title: "Sudo shell escalation on {agent_id}: {event.message}"
+  ai_triage: true

@@ -1,0 +1,84 @@
+/* Argus — light theme override (data-theme="light")
+   The default aesthetic is dark. This inverts it for users who prefer light. */
+
+:root[data-theme="light"] {
+  --bg:           #f1f5f9;
+  --bg-2:         #e8eef7;
+  --surface:      #ffffff;
+  --surface-2:    #f8fafc;
+  --surface-3:    #f1f5f9;
+  --glass:        rgba(255,255,255,0.85);
+
+  --border:       #e2e8f0;
+  --border-2:     #cbd5e1;
+  --border-glow:  rgba(0, 180, 120, 0.2);
+
+  --text:         #0f172a;
+  --text-2:       #334155;
+  --muted:        #64748b;
+  --faint:        #94a3b8;
+
+  --accent:        #059669;
+  --accent-dim:    rgba(5, 150, 105, 0.08);
+  --accent-border: rgba(5, 150, 105, 0.25);
+  --accent-glow:   0 0 16px rgba(5, 150, 105, 0.25);
+
+  --primary:        #1d4ed8;
+  --primary-hover:  #1e40af;
+  --primary-soft:   rgba(29, 78, 216, 0.08);
+  --primary-border: rgba(29, 78, 216, 0.25);
+  --primary-glow:   0 0 14px rgba(29, 78, 216, 0.25);
+
+  --critical:        #dc2626;
+  --critical-bg:     #fef2f2;
+  --critical-border: #fecaca;
+  --high:            #ea580c;
+  --high-bg:         #fff7ed;
+  --high-border:     #fed7aa;
+  --medium:          #b45309;
+  --medium-bg:       #fffbeb;
+  --medium-border:   #fde68a;
+  --low:             #0284c7;
+  --low-bg:          #f0f9ff;
+  --low-border:      #bae6fd;
+  --ok:              #059669;
+  --ok-bg:           #ecfdf5;
+  --ok-border:       #a7f3d0;
+
+  --shadow-1: 0 1px 3px rgba(15,23,42,.06);
+  --shadow-2: 0 4px 16px rgba(15,23,42,.1);
+  --shadow-card: 0 1px 4px rgba(15,23,42,.08), inset 0 1px 0 rgba(255,255,255,0.8);
+}
+
+[data-theme="light"] body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(5,150,105,0.04) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 110%, rgba(29,78,216,0.04) 0%, transparent 60%);
+}
+
+[data-theme="light"] .sidebar {
+  background: linear-gradient(180deg, #0e1729 0%, #0b1220 100%);
+}
+[data-theme="light"] .topbar,
+[data-theme="light"] .ticker {
+  background: rgba(255,255,255,0.92);
+}
+[data-theme="light"] .ticker-viewport::after {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.95));
+}
+[data-theme="light"] .ticker { border-bottom-color: var(--border); }
+[data-theme="light"] ::selection { background: rgba(5,150,105,0.15); }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: #cbd5e1; }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+[data-theme="light"] .chart-gridline { stroke: #e8edf3; }
+[data-theme="light"] .chart-tick { fill: #94a3b8; }
+[data-theme="light"] .chart-xlabel { fill: #94a3b8; }
+[data-theme="light"] .hm-tile { background: #f8fafc; }
+[data-theme="light"] .bar-track { background: #e8edf5; }
+[data-theme="light"] .risk-track { background: #e8edf5; }
+[data-theme="light"] .table td { border-bottom-color: #f1f5f9; }
+[data-theme="light"] .table tbody tr:hover { background: #f8fafc; }
+[data-theme="light"] .mini-row + .mini-row { border-top-color: #f1f5f9; }
+[data-theme="light"] .mini-row:hover { background: var(--surface-2); }
+[data-theme="light"] .modal-overlay { background: rgba(15,23,42,0.45); }
+[data-theme="light"] .drawer-overlay { background: rgba(15,23,42,0.4); }

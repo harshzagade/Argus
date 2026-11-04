@@ -1,0 +1,16 @@
+- id: ARG-1023
+  name: SSH authorized_keys modified
+  description: An authorized_keys file was created or modified. Attackers plant their own public keys here to guarantee persistent SSH access to the account.
+  severity: high
+  mitre: [T1098.004]
+  compliance:
+    pci_dss: ["11.5.1", "10.2.4"]
+    nist_800_53: ["SI-7", "AC-2"]
+  source: fim
+  match:
+    all:
+      - {field: "event.path", regex: 'authorized_keys$'}
+      - {field: "event.action", in: ["created", "modified"]}
+  entities: ["event.path", "event.user"]
+  title: "SSH authorized_keys changed on {agent_id}: {event.path}"
+  ai_triage: true

@@ -1,0 +1,18 @@
+- id: ARG-1026
+  name: Interactive shell spawned by web service account
+  description: A web service account (www-data, apache, nginx, httpd) executed an interactive shell. Web accounts should never receive shells; this almost always means a webshell or remote-code-execution flaw was exploited.
+  severity: critical
+  mitre: [T1059.004]
+  compliance:
+    pci_dss: ["11.5.1", "12.10.1"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["SI-4", "CM-7"]
+  source: process
+  match:
+    all:
+      - {field: "event.user", in: ["www-data", "apache", "nginx", "httpd", "www"]}
+      - {field: "event.cmdline", regex: '(^|\s|/)(bash|sh|dash|zsh)(\s|$)'}
+  entities: ["event.user", "event.exe", "event.cmdline"]
+  title: "Web account {event.user} spawned a shell on {agent_id}"
+  playbook: isolate-host
+  ai_triage: true

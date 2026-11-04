@@ -1,0 +1,113 @@
+- id: ARG-1031
+  name: Honeypot recon command burst
+  description: More than 10 recon commands executed in the SSH honeypot within 5 minutes. Indicates systematic attacker enumeration of the deception environment — correlate src_ip across all sensors.
+  severity: high
+  mitre: [T1082, T1033, T1016]
+  compliance:
+    pci_dss: ["10.2.4"]
+    nist_800_53: ["SI-4", "AU-6"]
+  source: process
+  match:
+    all:
+      - {field: "event.honeypot", equals: true}
+      - {field: "event.category", equals: "recon"}
+  group_by: ["agent_id", "event.src_ip"]
+  threshold: {count: 10, window: 300}
+  cooldown: 600
+  entities: ["event.src_ip", "event.session_id"]
+  title: "Honeypot recon burst from {event.src_ip} on {agent_id}"
+  ai_triage: true
+
+- id: ARG-1032
+  name: Honeypot malware download
+  description: The SSH honeypot recorded a wget/curl download command, suggesting the attacker is dropping a payload onto what they believe is a real host. The download URL is a live IOC.
+  severity: critical
+  mitre: [T1105, T1059]
+  compliance:
+    pci_dss: ["10.2.4", "12.10.1"]
+    gdpr: ["Art.33"]
+    nist_800_53: ["SI-4", "IR-4"]
+  source: process
+  match:
+    all:
+      - {field: "event.honeypot", equals: true}
+      - {field: "event.category", equals: "download"}
+  entities: ["event.src_ip", "event.cmdline", "event.session_id"]
+  title: "Honeypot payload download from {event.src_ip}: {event.cmdline}"
+  ai_triage: true
+
+- id: ARG-1033
+  name: Honeypot persistence attempt
+  description: An attacker on the SSH honeypot attempted to establish persistence via crontab, authorized_keys, or new user creation. High-confidence indicator of systematic compromise methodology.
+  severity: high
+  mitre: [T1136, T1053, T1098.004]
+  compliance:
+    pci_dss: ["8.1.3", "10.2.4"]
+    nist_800_53: ["SI-4", "AC-2"]
+  source: process
+  match:
+    all:
+      - {field: "event.honeypot", equals: true}
+      - {field: "event.category", equals: "persistence"}
+  entities: ["event.src_ip", "event.cmdline", "event.session_id"]
+  title: "Honeypot persistence attempt from {event.src_ip}: {event.cmdline}"
+  ai_triage: true
+
+- id: ARG-1034
+  name: Honeypot HTTP credential submission
+  description: An attacker submitted credentials to the HTTP honeypot login form. Indicates credential stuffing or targeted attack activity.
+  severity: medium
+  mitre: [T1110.004, T1078]
+  compliance:
+    pci_dss: ["8.3.6", "10.2.4"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["AC-7", "SI-4"]
+  source: process
+  match:
+    all:
+      - {field: "event.honeypot", equals: true}
+      - {field: "event.category", equals: "credential-submission"}
+  group_by: ["event.src_ip"]
+  threshold: {count: 3, window: 600}
+  cooldown: 1800
+  entities: ["event.src_ip", "event.session_id"]
+  title: "HTTP honeypot credential submission burst from {event.src_ip}"
+  ai_triage: true
+
+- id: ARG-1035
+  name: Honeypot SQL injection probe
+  description: The HTTP honeypot detected SQL injection patterns in request body. Indicates automated scanner or targeted SQLi attack.
+  severity: medium
+  mitre: [T1190]
+  compliance:
+    pci_dss: ["6.3.2", "10.2.4"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["SI-4", "SA-11"]
+  source: process
+  match:
+    all:
+      - {field: "event.honeypot", equals: true}
+      - {field: "event.category", equals: "sqli"}
+  group_by: ["event.src_ip"]
+  threshold: {count: 2, window: 300}
+  cooldown: 900
+  entities: ["event.src_ip", "event.session_id"]
+  title: "HTTP honeypot SQLi probes from {event.src_ip}"
+  ai_triage: true
+
+- id: ARG-1036
+  name: Honeypot path traversal probe
+  description: The HTTP honeypot received a path traversal or LFI (Local File Inclusion) request, attempting to read /etc/passwd, /proc/, or similar sensitive files.
+  severity: medium
+  mitre: [T1083, T1190]
+  compliance:
+    pci_dss: ["6.3.2", "10.2.4"]
+    nist_800_53: ["SI-4", "SA-11"]
+  source: process
+  match:
+    all:
+      - {field: "event.honeypot", equals: true}
+      - {field: "event.category", equals: "path-traversal"}
+  entities: ["event.src_ip", "event.session_id"]
+  title: "HTTP honeypot path traversal from {event.src_ip}"
+  ai_triage: false

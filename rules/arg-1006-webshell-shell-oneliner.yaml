@@ -1,0 +1,19 @@
+- id: ARG-1006
+  name: Webshell-like shell one-liner
+  description: A system shell (sh, bash, dash) was started with a one-liner typical of webshell or remote-code-execution payloads (downloaders, decoders, temp-dir staging, interpreter -c/-e/-r tricks).
+  severity: critical
+  mitre: [T1505.003, T1059.004]
+  compliance:
+    pci_dss: ["11.5.1", "12.10.1"]
+    gdpr: ["Art.32", "Art.33"]
+    nist_800_53: ["SI-4", "IR-4"]
+  source: process
+  match:
+    all:
+      - {field: "event.action", equals: "started"}
+      - {field: "event.exe", regex: '/(ba)?sh$|/dash$'}
+      - {field: "event.cmdline", regex: '-c\s+.*(curl|wget|base64\s+(-d|--decode)|/tmp/|/dev/shm/|chmod\s+\+x|python3?\s+-c|perl\s+-e|php\s+-r)'}
+  entities: ["event.exe", "event.cmdline", "event.user"]
+  title: "Webshell-like shell one-liner on {agent_id}: {event.cmdline}"
+  playbook: isolate-host
+  ai_triage: true

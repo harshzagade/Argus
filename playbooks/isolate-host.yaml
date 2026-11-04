@@ -1,0 +1,10 @@
+name: isolate-host
+description: Isolate the host from the network for any critical alert and notify the SOC channel.
+on_severity: critical
+steps:
+  - action: isolate
+    params: {}
+    target: agent
+  - action: notify
+    params: {channel: "soc", message: "Host {agent_id} isolated automatically: {alert.title}"}
+    target: server

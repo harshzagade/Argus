@@ -1,0 +1,16 @@
+name: honeypot-c2-response
+description: >
+  When an attacker on the honeypot attempts C2 communication or downloads a
+  payload, immediately block their source IP fleet-wide and notify the SOC
+  with the captured command line as evidence.
+on_rule: ARG-1030
+steps:
+  - action: block_ip
+    target: agent
+    params:
+      ip: "{entities.src_ip}"
+  - action: notify
+    target: server
+    params:
+      channel: soc
+      message: "🔴 CRITICAL: Honeypot C2 attempt from {entities.src_ip}. Command: {entities.cmdline}. Session: {entities.session_id}. IP auto-blocked."

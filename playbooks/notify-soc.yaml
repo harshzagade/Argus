@@ -1,0 +1,7 @@
+name: notify-soc
+description: Send high-severity alerts to the SOC channel for analyst review.
+on_severity: high
+steps:
+  - action: notify
+    params: {channel: "soc", message: "[HIGH] {alert.title} on {agent_id}"}
+    target: server

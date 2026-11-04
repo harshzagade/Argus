@@ -1,0 +1,20 @@
+# Sentinel — Unified Security Platform
+# Install everything needed to run all three components together:
+#   - Argus SIEM/XDR server
+#   - Sentinel Threat Intelligence Platform
+#   - Sentinel Honeypot (SSH + HTTP)
+
+# Core server + TI Platform
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pyyaml>=6.0
+
+# SSH Honeypot
+paramiko>=3.0.0
+
+# Optional: use httpx for async feed fetching in TI platform
+# httpx>=0.27
+
+# Optional: real LLM triage (no hard dependency, handled via env keys)
+# anthropic>=0.30
+# openai>=1.0

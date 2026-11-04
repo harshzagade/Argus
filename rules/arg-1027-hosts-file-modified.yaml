@@ -1,0 +1,18 @@
+- id: ARG-1027
+  name: Hosts file modified
+  description: /etc/hosts was created or modified. Attackers edit the hosts file to silently redirect traffic for selected domains to attacker-controlled servers, enabling credential interception without any DNS change.
+  severity: high
+  mitre: [T1557]
+  compliance:
+    pci_dss: ["11.5.1"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["SI-7", "CM-6"]
+  source: fim
+  match:
+    all:
+      - {field: "event.path", equals: "/etc/hosts"}
+      - {field: "event.action", in: ["created", "modified"]}
+  entities: ["event.path", "event.user"]
+  title: "Hosts file changed on {agent_id} ({event.action})"
+  playbook: snapshot-evidence
+  ai_triage: true

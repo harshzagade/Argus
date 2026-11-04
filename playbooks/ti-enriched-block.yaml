@@ -1,0 +1,16 @@
+name: ti-enriched-block
+description: >
+  When any alert fires where the enrichment has confirmed a malicious IP
+  (via Sentinel TI or external feeds), auto-block it at the host level
+  and open a high-priority SOC notification.
+on_severity: critical
+steps:
+  - action: notify
+    target: server
+    params:
+      channel: soc
+      message: "🛡️ TI-confirmed threat: {alert.title} on {hostname}. Severity: {alert.severity}. Auto-response triggered."
+  - action: block_ip
+    target: agent
+    params:
+      ip: "{entities.src_ip}"

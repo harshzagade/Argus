@@ -1,0 +1,10 @@
+name: block-ssh-bruteforce
+description: Block the attacking source IP on the affected agent and notify the SOC channel.
+on_rule: ARG-1001
+steps:
+  - action: block_ip
+    params: {ip: "{entities.src_ip}"}
+    target: agent
+  - action: notify
+    params: {channel: "soc", message: "Blocked {entities.src_ip} on {agent_id} after brute-force alert: {alert.title}"}
+    target: server

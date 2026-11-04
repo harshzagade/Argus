@@ -1,0 +1,20 @@
+- id: ARG-1020
+  name: Ransomware-like mass file modification
+  description: More than 50 file creations or modifications on a single host within two minutes. Matches the file-churn signature of ransomware encryption sweeping a filesystem.
+  severity: critical
+  mitre: [T1486]
+  compliance:
+    pci_dss: ["11.5.1", "12.10.1"]
+    gdpr: ["Art.32", "Art.33"]
+    nist_800_53: ["SI-4", "IR-4"]
+  source: fim
+  match:
+    all:
+      - {field: "event.action", in: ["created", "modified"]}
+  group_by: ["agent_id"]
+  threshold: {count: 50, window: 120}
+  cooldown: 1800
+  entities: ["event.path"]
+  title: "Mass file modification burst on {agent_id}: possible ransomware"
+  playbook: isolate-host
+  ai_triage: true

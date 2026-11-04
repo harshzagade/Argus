@@ -1,0 +1,13 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY server/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY server/ ./server/
+COPY rules/ ./rules/
+COPY playbooks/ ./playbooks/
+COPY dashboard/ ./dashboard/
+COPY simulator/ ./simulator/
+ENV ARGUS_DB=/data/argus.db ARGUS_API_KEY=argus-dev-key
+VOLUME /data
+EXPOSE 8000
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000"]

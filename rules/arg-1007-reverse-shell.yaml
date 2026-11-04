@@ -1,0 +1,18 @@
+- id: ARG-1007
+  name: Reverse shell pattern
+  description: A process command line matches known reverse-shell idioms (/dev/tcp, netcat -e, bash -i redirection, FIFO shells). Indicates an active interactive backdoor channel to an external host.
+  severity: critical
+  mitre: [T1059.004, T1071]
+  compliance:
+    pci_dss: ["10.2.4", "12.10.1"]
+    gdpr: ["Art.32", "Art.33"]
+    nist_800_53: ["SI-4", "IR-4"]
+  source: process
+  match:
+    all:
+      - {field: "event.action", equals: "started"}
+      - {field: "event.cmdline", regex: '(/dev/tcp/|/dev/udp/|mkfifo\s+\S+|bash\s+-i\s+>&|\bnc(\.exe)?\b.*\s-e\s|powershell.*-e(nc|ncodedCommand))'}
+  entities: ["event.exe", "event.cmdline", "event.user"]
+  title: "Reverse shell pattern on {agent_id}: {event.cmdline}"
+  playbook: isolate-host
+  ai_triage: true

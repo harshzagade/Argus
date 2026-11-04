@@ -1,0 +1,17 @@
+- id: ARG-1021
+  name: Privilege escalation via su to root
+  description: A successful su transition to the root account was recorded. Valid-account abuse for privilege escalation; unexpected su to root warrants investigation.
+  severity: high
+  mitre: [T1078]
+  compliance:
+    pci_dss: ["10.2.4"]
+    nist_800_53: ["AC-2", "AU-2"]
+  source: auth
+  match:
+    all:
+      - {field: "event.service", equals: "su"}
+      - {field: "event.result", equals: "success"}
+      - {field: "event.user", equals: "root"}
+  entities: ["event.user", "event.src_ip"]
+  title: "su to root succeeded on {agent_id}"
+  ai_triage: true

@@ -1,0 +1,18 @@
+- id: ARG-1008
+  name: Executable launched from world-writable directory
+  description: A process image was executed from /tmp, /var/tmp or /dev/shm. Malware droppers and exploit payloads commonly stage their binaries in world-writable locations.
+  severity: high
+  mitre: [T1204.002, T1059]
+  compliance:
+    pci_dss: ["11.5.1"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["SI-4", "SI-7"]
+  source: process
+  match:
+    all:
+      - {field: "event.action", equals: "started"}
+      - {field: "event.exe", regex: '^/(tmp|var/tmp|dev/shm)/'}
+  entities: ["event.exe", "event.cmdline", "event.user"]
+  title: "Suspicious executable from temp dir on {agent_id}: {event.exe}"
+  playbook: quarantine-malware
+  ai_triage: true

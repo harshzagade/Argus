@@ -1,0 +1,10 @@
+name: snapshot-evidence
+description: Collect forensic evidence from the agent (auth logs, syslog, audit log, process list) before an attacker can clean up, then notify the SOC channel.
+on_severity: critical
+steps:
+  - action: run
+    params: {command: "mkdir -p /var/lib/argus/evidence && tar -czf /var/lib/argus/evidence/{agent_id}-snapshot.tgz /var/log/auth.log /var/log/secure /var/log/syslog /var/log/audit/audit.log 2>/dev/null; ps auxf > /var/lib/argus/evidence/{agent_id}-ps.txt; echo snapshot-done"}
+    target: agent
+  - action: notify
+    params: {channel: "soc", message: "Evidence snapshot collected on {agent_id}: {alert.title}"}
+    target: server

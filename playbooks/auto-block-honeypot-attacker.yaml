@@ -1,0 +1,20 @@
+name: auto-block-honeypot-attacker
+description: >
+  Auto-block any IP that successfully logs into a honeypot. Since honeypots
+  are pure deception — no legitimate traffic should ever reach them — a
+  successful login is a confirmed attacker with zero false-positive risk.
+on_rule: ARG-1029
+steps:
+  - action: block_ip
+    target: agent
+    params:
+      ip: "{entities.src_ip}"
+  - action: notify
+    target: server
+    params:
+      channel: soc
+      message: "🍯 Honeypot attacker {entities.src_ip} auto-blocked on {hostname}. Session: {entities.session_id}"
+  - action: webhook
+    target: server
+    params:
+      url: "${SENTINEL_WEBHOOK_URL}"

@@ -1,0 +1,18 @@
+- id: ARG-1011
+  name: Cron persistence modified
+  description: A file under /etc/cron.d, /etc/cron.daily, /etc/cron.hourly, /etc/cron.weekly, /etc/cron.monthly, /etc/crontab or /var/spool/cron was created or modified. Scheduled tasks are a primary Linux persistence mechanism.
+  severity: high
+  mitre: [T1053.003]
+  compliance:
+    pci_dss: ["11.5.1"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["SI-7", "CM-6"]
+  source: fim
+  match:
+    all:
+      - {field: "event.path", regex: '^/etc/(cron\.d/|cron\.daily/|cron\.hourly/|cron\.weekly/|cron\.monthly/|crontab)|^/var/spool/cron/'}
+      - {field: "event.action", in: ["created", "modified"]}
+  entities: ["event.path", "event.user"]
+  title: "Cron persistence changed on {agent_id}: {event.path}"
+  playbook: snapshot-evidence
+  ai_triage: true

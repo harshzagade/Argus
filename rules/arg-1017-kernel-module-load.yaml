@@ -1,0 +1,16 @@
+- id: ARG-1017
+  name: Kernel module loaded
+  description: A kernel module was loaded via insmod/modprobe or a module-load message appeared in the kernel log. Rootkits commonly hide as loadable kernel modules.
+  severity: high
+  mitre: [T1547.006]
+  compliance:
+    pci_dss: ["11.5.1"]
+    nist_800_53: ["SI-7", "CM-6"]
+  source: syslog
+  match:
+    any:
+      - {field: "event.message", regex: '\b(insmod|modprobe)\b'}
+      - {field: "event.message", regex: 'module .* (loaded|inserted)'}
+  entities: ["event.message"]
+  title: "Kernel module load on {agent_id}"
+  ai_triage: true

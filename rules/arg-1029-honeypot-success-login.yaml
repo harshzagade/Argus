@@ -1,0 +1,38 @@
+- id: ARG-1029
+  name: Honeypot successful login
+  description: An attacker successfully authenticated to the Sentinel SSH honeypot after multiple failed attempts. The host is a deception sensor — any successful login is intentionally malicious and confirms active attacker presence.
+  severity: critical
+  mitre: [T1110.001, T1078]
+  compliance:
+    pci_dss: ["10.2.4", "12.10.1"]
+    gdpr: ["Art.32", "Art.33"]
+    nist_800_53: ["SI-4", "RA-5"]
+  source: auth
+  match:
+    all:
+      - {field: "event.service", equals: "sshd"}
+      - {field: "event.result", equals: "success"}
+      - {field: "event.honeypot", equals: true}
+  entities: ["event.src_ip", "event.user", "event.session_id"]
+  title: "Honeypot login success from {event.src_ip} (user: {event.user})"
+  playbook: block-ssh-bruteforce
+  ai_triage: true
+
+- id: ARG-1030
+  name: Honeypot reverse shell attempt
+  description: Attacker running on the SSH honeypot attempted to establish a reverse shell or outbound C2 connection. Indicates active post-exploitation behavior and a confirmed threat actor.
+  severity: critical
+  mitre: [T1059.004, T1071]
+  compliance:
+    pci_dss: ["10.2.4", "12.10.1"]
+    gdpr: ["Art.32"]
+    nist_800_53: ["SI-4", "IR-4"]
+  source: process
+  match:
+    all:
+      - {field: "event.honeypot", equals: true}
+      - {field: "event.category", in: ["c2", "download"]}
+  entities: ["event.src_ip", "event.cmdline", "event.session_id"]
+  title: "Honeypot C2/download attempt: {event.cmdline}"
+  playbook: isolate-host
+  ai_triage: true

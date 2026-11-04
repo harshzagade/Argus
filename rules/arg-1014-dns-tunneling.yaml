@@ -1,0 +1,16 @@
+- id: ARG-1014
+  name: Possible DNS tunneling
+  description: A DNS lookup tool (dig, nslookup, host) was executed with an unusually long query argument (80+ characters after the command). Long encoded subdomains are a hallmark of DNS tunneling and data exfiltration over DNS.
+  severity: high
+  mitre: [T1071.004, T1048]
+  compliance:
+    pci_dss: ["10.2.4"]
+    nist_800_53: ["SI-4", "SC-7"]
+  source: process
+  match:
+    all:
+      - {field: "event.action", equals: "started"}
+      - {field: "event.cmdline", regex: '\b(dig|nslookup|host)\b.{80,}'}
+  entities: ["event.cmdline", "event.user"]
+  title: "Possible DNS tunneling on {agent_id} by {event.user}"
+  ai_triage: true
