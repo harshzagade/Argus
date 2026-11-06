@@ -17,4 +17,4 @@ steps:
   - action: webhook
     target: server
     params:
-      url: "${SENTINEL_WEBHOOK_URL}"
+      url: "${ARGUS_WEBHOOK_URL}"

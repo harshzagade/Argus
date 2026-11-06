@@ -1,1 +1,1 @@
-# Sentinel Threat Intelligence Platform — MISP-inspired IOC management
+# Argus Threat Intelligence Platform — MISP-inspired IOC management

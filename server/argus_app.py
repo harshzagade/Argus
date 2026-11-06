@@ -1,18 +1,18 @@
-"""Sentinel unified application.
+"""Argus unified application.
 
 Extends the Argus FastAPI app with:
   - Threat Intelligence Platform routes (/api/ti/v1/*)
   - A top-level health endpoint that reports all components
 
 Run:
-    uvicorn server.sentinel_app:app --host 0.0.0.0 --port 8000
+    uvicorn server.argus_app:app --host 0.0.0.0 --port 8000
 
 Environment:
     ARGUS_API_KEY           shared API key for SIEM + TI (default: argus-dev-key)
     ARGUS_DB                SQLite path for SIEM data
-    SENTINEL_TI_DB          SQLite path for TI data (default: ./sentinel-ti.db)
-    SENTINEL_TI_URL         (optional) external TI URL; if set enrichment queries it
-    SENTINEL_TI_FEED_INTERVAL  seconds between automatic feed refreshes (default: 3600)
+    ARGUS_TI_DB          SQLite path for TI data (default: ./argus-ti.db)
+    ARGUS_TI_URL         (optional) external TI URL; if set enrichment queries it
+    ARGUS_TI_FEED_INTERVAL  seconds between automatic feed refreshes (default: 3600)
     ANTHROPIC_API_KEY / OPENAI_API_KEY  optional LLM triage
     ABUSEIPDB_KEY / VT_KEY / GREYNOISE_KEY  optional external threat intel
 """
@@ -35,9 +35,9 @@ from .app import app as argus_app
 from threatintel.app import app as _ti_fastapi  # noqa: E402
 
 
-# ---- Build the unified Sentinel app by combining both route sets
+# ---- Build the unified Argus app by combining both route sets
 app = FastAPI(
-    title="Sentinel — Unified Security Platform",
+    title="Argus — Unified Security Platform",
     version="1.0.0",
     description=(
         "Argus SIEM/XDR  +  SSH/HTTP Honeypot  +  Threat Intelligence Platform\n\n"
@@ -48,13 +48,13 @@ app = FastAPI(
 )
 
 
-@app.get("/api/sentinel/health")
-def sentinel_health():
+@app.get("/api/argus/health")
+def argus_health():
     """Combined platform health check."""
     from .app import engine, playbooks
     from .db import now_iso
     return {
-        "platform": "Sentinel",
+        "platform": "Argus",
         "version": "1.0.0",
         "components": {
             "siem": {
@@ -64,7 +64,7 @@ def sentinel_health():
             },
             "threat_intel": {
                 "status": "ok",
-                "db": os.path.basename(os.environ.get("SENTINEL_TI_DB", "sentinel-ti.db")),
+                "db": os.path.basename(os.environ.get("ARGUS_TI_DB", "argus-ti.db")),
             },
             "honeypot": {
                 "status": "configured",
@@ -103,7 +103,7 @@ for handler in _ti_fastapi.router.on_startup:
 for handler in _ti_fastapi.router.on_shutdown:
     app.router.on_shutdown.append(handler)
 
-# ---- Serve the Sentinel dashboard at /
+# ---- Serve the Argus dashboard at /
 _dashboard_dir = _ROOT / "dashboard"
 if _dashboard_dir.exists():
     app.mount("/", StaticFiles(directory=str(_dashboard_dir), html=True), name="dashboard")

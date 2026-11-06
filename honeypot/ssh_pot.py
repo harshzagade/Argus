@@ -1,15 +1,15 @@
-"""Sentinel SSH Honeypot — inspired by Cowrie (github.com/cowrie/cowrie, ~6k stars).
+"""Argus SSH Honeypot — inspired by Cowrie (github.com/cowrie/cowrie, ~6k stars).
 
 Emulates an SSH server that accepts any credentials after N failures, logs every
 command the attacker runs, captures file uploads, and ships all sessions as
-structured events to the Sentinel/Argus ingest endpoint.
+structured events to the Argus/Argus ingest endpoint.
 
 Architecture:
     AsyncSSHServer (asyncio, paramiko socket shim)
     -> SessionHandler (per-connection state machine)
     -> CommandEmulator (fake filesystem responses)
     -> SessionStore (in-memory + JSONL on disk)
-    -> SentinelShipper (batches events -> POST /api/v1/events)
+    -> ArgusShipper (batches events -> POST /api/v1/events)
 
 Requires: paramiko>=3.0
 """
@@ -26,7 +26,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-log = logging.getLogger("sentinel.honeypot.ssh")
+log = logging.getLogger("argus.honeypot.ssh")
 
 # ---------------------------------------------------------------------------
 # Fake filesystem and command emulator
@@ -309,7 +309,7 @@ class HoneypotSession:
 # ---------------------------------------------------------------------------
 
 class SessionStore:
-    def __init__(self, spool_dir: str = "/tmp/sentinel-honeypot"):
+    def __init__(self, spool_dir: str = "/tmp/argus-honeypot"):
         self.spool_dir = Path(spool_dir)
         self.spool_dir.mkdir(parents=True, exist_ok=True)
         self._sessions: dict[str, HoneypotSession] = {}
@@ -349,7 +349,7 @@ class SessionStore:
 
 
 # ---------------------------------------------------------------------------
-# Sentinel shipper: converts closed sessions -> Argus events
+# Argus shipper: converts closed sessions -> Argus events
 # ---------------------------------------------------------------------------
 
 class HoneypotShipper:
@@ -671,27 +671,27 @@ class SSHHoneypot:
     """
     Medium-interaction SSH honeypot inspired by Cowrie.
     Accepts any credential after max_login_tries failed attempts,
-    emulates a bash shell, logs every command, and ships sessions to Sentinel.
+    emulates a bash shell, logs every command, and ships sessions to Argus.
     """
 
     def __init__(self, host: str = "0.0.0.0", port: int = 2222,
                  honeypot_id: str = "honeypot-ssh-01",
-                 host_key_path: str = "/tmp/sentinel-ssh-host-key",
-                 sentinel_server: str = "http://localhost:8000",
-                 sentinel_api_key: str = "argus-dev-key",
-                 spool_dir: str = "/tmp/sentinel-honeypot",
+                 host_key_path: str = "/tmp/argus-ssh-host-key",
+                 argus_server: str = "http://localhost:8000",
+                 argus_api_key: str = "argus-dev-key",
+                 spool_dir: str = "/tmp/argus-honeypot",
                  max_login_tries: int = 3):
         self.host = host
         self.port = port
         self.honeypot_id = honeypot_id
         self.host_key_path = host_key_path
-        self.sentinel_server = sentinel_server
-        self.sentinel_api_key = sentinel_api_key
+        self.argus_server = argus_server
+        self.argus_api_key = argus_api_key
         self.spool_dir = spool_dir
         self.max_login_tries = max_login_tries
 
         self.store = SessionStore(spool_dir)
-        self.shipper = HoneypotShipper(sentinel_server, sentinel_api_key,
+        self.shipper = HoneypotShipper(argus_server, argus_api_key,
                                        honeypot_id, self.store)
         self._server = None
         self._host_key = None
@@ -731,21 +731,21 @@ class HTTPHoneypot:
     """
     Low-interaction HTTP honeypot.
     Emulates common web application login pages and admin panels,
-    captures credentials and payloads, ships to Sentinel.
+    captures credentials and payloads, ships to Argus.
     """
 
     def __init__(self, host: str = "0.0.0.0", port: int = 8080,
                  honeypot_id: str = "honeypot-http-01",
-                 sentinel_server: str = "http://localhost:8000",
-                 sentinel_api_key: str = "argus-dev-key",
-                 spool_dir: str = "/tmp/sentinel-honeypot"):
+                 argus_server: str = "http://localhost:8000",
+                 argus_api_key: str = "argus-dev-key",
+                 spool_dir: str = "/tmp/argus-honeypot"):
         self.host = host
         self.port = port
         self.honeypot_id = honeypot_id
-        self.sentinel_server = sentinel_server.rstrip("/")
-        self.sentinel_api_key = sentinel_api_key
+        self.argus_server = argus_server.rstrip("/")
+        self.argus_api_key = argus_api_key
         self.store = SessionStore(spool_dir)
-        self.shipper = HoneypotShipper(sentinel_server, sentinel_api_key,
+        self.shipper = HoneypotShipper(argus_server, argus_api_key,
                                        honeypot_id, self.store)
         self._sessions_by_ip: dict[str, HoneypotSession] = {}
 

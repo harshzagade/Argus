@@ -2,7 +2,7 @@
 
 Stores IOCs (Indicators of Compromise), threat events, and feed sources.
 Modeled after MISP (github.com/MISP/MISP, ~5k stars) but lightweight and
-embeddable into the Sentinel ecosystem.
+embeddable into the Argus ecosystem.
 
 Tables:
     iocs        — individual indicators (IP, domain, hash, URL, email)

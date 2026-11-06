@@ -1190,7 +1190,7 @@ function wireUpgrades() {
 
 
 /* ============================================================
-   SENTINEL EXTENSIONS — Honeypot + Threat Intelligence views
+   ARGUS EXTENSIONS — Honeypot + Threat Intelligence views
    ============================================================ */
 
 /* ------------ Honeypot view ------------ */
@@ -1199,7 +1199,7 @@ const TI_BASE = '/api/ti/v1';
 
 async function tiApi(path, opts = {}) {
   /* The TI platform runs on the same server via the combined app,
-     or at SENTINEL_TI_URL.  We try the same origin first. */
+     or at ARGUS_TI_URL.  We try the same origin first. */
   const headers = Object.assign({ 'X-API-Key': S.key }, opts.headers || {});
   if (opts.body !== undefined && !headers['Content-Type'])
     headers['Content-Type'] = 'application/json';
@@ -1525,7 +1525,7 @@ document.addEventListener('DOMContentLoaded', () => {
 const _origShowView = typeof showView === 'function' ? showView : null;
 
 /* Patch the view loader by extending the existing refresh dispatcher */
-const _sentinelViewLoaders = {
+const _argusViewLoaders = {
   honeypot: loadHoneypotView,
   threatintel: loadThreatIntelView,
 };
@@ -1539,7 +1539,7 @@ document.querySelectorAll('.nav-btn[data-view="honeypot"], .nav-btn[data-view="t
       // Use the existing showView to switch the section
       if (typeof showView === 'function') showView(view);
       // Then load data
-      const loader = _sentinelViewLoaders[view];
+      const loader = _argusViewLoaders[view];
       if (loader) loader();
     });
   });
@@ -1547,10 +1547,10 @@ document.querySelectorAll('.nav-btn[data-view="honeypot"], .nav-btn[data-view="t
 /* Also integrate into the existing polling refresh loop.
    If the active view is one of ours, refresh it. */
 const _origRefresh = typeof refreshCurrentView === 'function' ? refreshCurrentView : null;
-function sentinelRefresh() {
+function argusRefresh() {
   if (_origRefresh) _origRefresh();
   const v = S.view;
-  if (_sentinelViewLoaders[v]) _sentinelViewLoaders[v]();
+  if (_argusViewLoaders[v]) _argusViewLoaders[v]();
 }
 
 /* CSS helpers for new elements (injected inline so no separate file needed) */

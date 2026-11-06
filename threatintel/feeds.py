@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 
 from .db import ThreatIntelDB
 
-log = logging.getLogger("sentinel.threatintel.feeds")
+log = logging.getLogger("argus.threatintel.feeds")
 
 # --- value classification ---------------------------------------------------
 
@@ -172,14 +172,14 @@ def parse_stix(content: str) -> list[dict]:
         labels = obj.get("labels", [])
 
         # Parse STIX pattern: [ipv4-addr:value = '1.2.3.4']
-        for stix_type, sentinel_type in stix_type_map.items():
+        for stix_type, argus_type in stix_type_map.items():
             matches = re.findall(
                 rf"\[{re.escape(stix_type)}:[\w.]+ \w+ '([^']+)'\]",
                 pattern
             )
             for m in matches:
                 iocs.append({
-                    "type": sentinel_type,
+                    "type": argus_type,
                     "value": m,
                     "score": min(100, confidence),
                     "description": description,
@@ -223,8 +223,8 @@ def parse_misp_event(content: str) -> list[dict]:
         attrs = event.get("Attribute", [])
         for attr in attrs:
             misp_type = attr.get("type", "")
-            sentinel_type = misp_type_map.get(misp_type)
-            if not sentinel_type:
+            argus_type = misp_type_map.get(misp_type)
+            if not argus_type:
                 continue
             value = attr.get("value", "")
             if "|" in value:
@@ -232,7 +232,7 @@ def parse_misp_event(content: str) -> list[dict]:
             if not value:
                 continue
             iocs.append({
-                "type": sentinel_type,
+                "type": argus_type,
                 "value": value,
                 "score": 75 if attr.get("to_ids") else 40,
                 "description": attr.get("comment", ""),
