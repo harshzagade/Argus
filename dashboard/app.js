@@ -89,7 +89,7 @@ const S = {
   ticker: [],
   incStatus: '',
   selectedInc: new Set(),
-  activityDays: 14,
+  activityDays: 1,
   notifs: [],
 };
 
@@ -1050,13 +1050,34 @@ function updateNotifBadge() {
 }
 function renderNotifs() {
   const read = getReadNotifIds();
-  $('notifList').innerHTML = S.notifs.length ? S.notifs.map((n) =>
-    `<div class="notif-item${read.has(n.id) ? '' : ' unread'}" data-nid="${esc(n.id)}" role="menuitem">` +
-    `<div class="n-body"><div class="n-title">${esc(n.title)}</div>` +
-    `<div class="n-when">${esc(timeAgo(n.ts))}${n.sub ? ' · ' + esc(n.sub) : ''}</div></div></div>`).join('')
+  $('notifList').innerHTML = S.notifs.length ? S.notifs.map((n) => {
+    const isRead = read.has(n.id);
+    const hasNav = n.ref && (n.kind === 'alert' || (n.kind === 'incident' && n.ref.id));
+    return (
+      `<div class="notif-item${isRead ? '' : ' unread'}${hasNav ? ' clickable' : ''}" data-nid="${esc(n.id)}" role="menuitem">` +
+      `<div class="n-body"><div class="n-title">${esc(n.title)}</div>` +
+      `<div class="n-when">${esc(timeAgo(n.ts))}${n.sub ? ' · ' + esc(n.sub) : ''}</div></div>` +
+      `<button class="notif-dismiss" data-nid="${esc(n.id)}" title="Dismiss" aria-label="Dismiss notification">` +
+      `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>` +
+      `</div>`
+    );
+  }).join('')
     : '<div class="notif-empty">No notifications yet. New critical and high alerts will appear here.</div>';
+
+  /* dismiss buttons — stop propagation so the row click doesn't also fire */
+  document.querySelectorAll('#notifList .notif-dismiss').forEach((btn) =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const nid = btn.dataset.nid;
+      S.notifs = S.notifs.filter((x) => x.id !== nid);
+      const r2 = getReadNotifIds(); r2.delete(nid); saveReadNotifIds(r2);
+      updateNotifBadge(); renderNotifs();
+    }));
+
+  /* row click — navigate to the related alert or incident */
   document.querySelectorAll('#notifList .notif-item').forEach((el) =>
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.notif-dismiss')) return;
       const n = S.notifs.find((x) => x.id === el.dataset.nid);
       const r2 = getReadNotifIds(); r2.add(el.dataset.nid); saveReadNotifIds(r2);
       updateNotifBadge(); renderNotifs();
@@ -1064,6 +1085,13 @@ function renderNotifs() {
       if (n && n.ref) {
         if (n.kind === 'alert') openAlertDrawer(n.ref);
         else if (n.kind === 'incident' && n.ref.id) openIncident(n.ref.id);
+      } else if (n && n.kind === 'alert') {
+        /* notification has no ref object — navigate to alerts view and search by title */
+        showView('alerts');
+        const searchEl = $('alertSearch');
+        if (searchEl && n.title) { searchEl.value = n.title; searchEl.dispatchEvent(new Event('input')); }
+      } else if (n && n.kind === 'incident') {
+        showView('incidents');
       }
     }));
 }
@@ -1190,7 +1218,7 @@ function wireUpgrades() {
 
 
 /* ============================================================
-   ARGUS EXTENSIONS — Honeypot + Threat Intelligence views
+   SENTINEL EXTENSIONS — Honeypot + Threat Intelligence views
    ============================================================ */
 
 /* ------------ Honeypot view ------------ */
@@ -1199,7 +1227,7 @@ const TI_BASE = '/api/ti/v1';
 
 async function tiApi(path, opts = {}) {
   /* The TI platform runs on the same server via the combined app,
-     or at ARGUS_TI_URL.  We try the same origin first. */
+     or at SENTINEL_TI_URL.  We try the same origin first. */
   const headers = Object.assign({ 'X-API-Key': S.key }, opts.headers || {});
   if (opts.body !== undefined && !headers['Content-Type'])
     headers['Content-Type'] = 'application/json';
@@ -1525,41 +1553,57 @@ document.addEventListener('DOMContentLoaded', () => {
 const _origShowView = typeof showView === 'function' ? showView : null;
 
 /* Patch the view loader by extending the existing refresh dispatcher */
-const _argusViewLoaders = {
-  honeypot: loadHoneypotView,
-  threatintel: loadThreatIntelView,
-};
-
-/* Override refreshView to also handle the new views.
-   The original refreshView is called via the nav button handler added below. */
-document.querySelectorAll('.nav-btn[data-view="honeypot"], .nav-btn[data-view="threatintel"]')
-  .forEach((btn) => {
+/* ---- Unified Intelligence view: tab switching ---- */
+function initIntelTabs() {
+  document.querySelectorAll('#intelTabs .tab').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const view = btn.dataset.view;
-      // Use the existing showView to switch the section
-      if (typeof showView === 'function') showView(view);
-      // Then load data
-      const loader = _argusViewLoaders[view];
-      if (loader) loader();
+      document.querySelectorAll('#intelTabs .tab').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.itab;
+      ['honeypot', 'threatintel', 'coverage'].forEach((t) => {
+        const el = document.getElementById('itab-' + t);
+        if (el) el.hidden = t !== tab;
+      });
+      if (tab === 'threatintel') loadThreatIntelView();
+      if (tab === 'coverage') loadCoverage();
+      if (tab === 'honeypot') loadHoneypotView();
     });
   });
-
-/* Also integrate into the existing polling refresh loop.
-   If the active view is one of ours, refresh it. */
-const _origRefresh = typeof refreshCurrentView === 'function' ? refreshCurrentView : null;
-function argusRefresh() {
-  if (_origRefresh) _origRefresh();
-  const v = S.view;
-  if (_argusViewLoaders[v]) _argusViewLoaders[v]();
 }
 
-/* CSS helpers for new elements (injected inline so no separate file needed) */
+async function loadIntelView() {
+  initIntelTabs();
+  loadHoneypotView(); // default tab
+}
+
+LOADERS.intel = loadIntelView;
+
+/* Override nav for intel button */
+document.querySelectorAll('.nav-btn[data-view="intel"]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (typeof showView === 'function') showView('intel');
+  });
+});
+
+/* Also integrate into the existing polling refresh loop. */
+const _origRefresh = typeof refreshCurrentView === 'function' ? refreshCurrentView : null;
+function sentinelRefresh() {
+  if (_origRefresh) _origRefresh();
+  if (S.view === 'intel') {
+    const activeTab = document.querySelector('#intelTabs .tab.active');
+    const tab = activeTab ? activeTab.dataset.itab : 'honeypot';
+    if (tab === 'honeypot') loadHoneypotView();
+    else if (tab === 'threatintel') loadThreatIntelView();
+    else if (tab === 'coverage') loadCoverage();
+  }
+}
+
+/* CSS helpers for new elements */
 const _style = document.createElement('style');
 _style.textContent = `
-.ti-hit { padding: 12px 16px; background: var(--card-bg, #f9fafb); border: 1px solid var(--border, #e5e7eb); border-radius: 8px; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.ti-hit { padding: 12px 16px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .ti-hit-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.ti-miss { padding: 10px 16px; background: var(--card-bg, #f9fafb); border: 1px solid var(--border, #e5e7eb); border-radius: 8px; margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.ti-miss { padding: 10px 16px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; display: flex; align-items: center; gap: 8px; }
 .ti-lookup-result { min-height: 48px; }
-#view-honeypot .panel, #view-threatintel .panel { margin-bottom: 20px; }
 `;
 document.head.appendChild(_style);

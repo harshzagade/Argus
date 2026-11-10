@@ -29,10 +29,9 @@
     </div>
 
     <nav class="side-nav" id="viewsNav" aria-label="Views">
-      <div class="nav-section">Monitor</div>
       <button class="nav-btn active" data-view="overview">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-        <span class="nav-label">Overview</span>
+        <span class="nav-label">Dashboard</span>
       </button>
       <button class="nav-btn" data-view="alerts">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
@@ -42,27 +41,13 @@
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         <span class="nav-label">Cases</span><span class="nav-badge" id="navIncCount"></span>
       </button>
-      <div class="nav-section">Manage</div>
       <button class="nav-btn" data-view="agents">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
         <span class="nav-label">Devices</span>
       </button>
-      <button class="nav-btn" data-view="coverage">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span class="nav-label">Coverage</span>
-      </button>
-      <button class="nav-btn" data-view="rules">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
-        <span class="nav-label">Rules</span>
-      </button>
-      <div class="nav-section">Intelligence</div>
-      <button class="nav-btn" data-view="honeypot">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
-        <span class="nav-label">Honeypots</span><span class="nav-badge" id="navHpCount"></span>
-      </button>
-      <button class="nav-btn" data-view="threatintel">
+      <button class="nav-btn" data-view="intel">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v3l2 2"/></svg>
-        <span class="nav-label">Threat Intel</span>
+        <span class="nav-label">Intelligence</span><span class="nav-badge" id="navHpCount"></span>
       </button>
     </nav>
 
@@ -121,9 +106,9 @@
     <main class="main">
 
       <!-- OVERVIEW -->
-      <section class="view active" id="view-overview" aria-label="Overview">
+      <section class="view active" id="view-overview" aria-label="Dashboard">
         <div class="page-head">
-          <div><h1>Overview</h1><p>What's happening in your network right now.</p></div>
+          <div><h1>Dashboard</h1><p>A live summary of everything happening across your network.</p></div>
         </div>
         <div class="stat-grid" id="statGrid"></div>
         <div class="panel-grid overview-grid">
@@ -132,7 +117,7 @@
               <div class="panel-title">Alert activity</div>
               <div class="chart-controls">
                 <div class="seg" id="activityRange" role="group" aria-label="Time range">
-                  <button data-days="1">24h</button><button data-days="7">7d</button><button data-days="14" class="active">14d</button><button data-days="30">30d</button>
+                  <button data-days="1" class="active">24h</button><button data-days="7">7d</button><button data-days="14">14d</button><button data-days="30">30d</button>
                 </div>
                 <div class="chart-legend" id="activityLegend"></div>
               </div>
@@ -158,7 +143,7 @@
       <!-- ALERTS -->
       <section class="view" id="view-alerts" aria-label="Alerts">
         <div class="page-head">
-          <div><h1>Alerts</h1><p>Everything Argus has spotted on your devices.</p></div>
+          <div><h1>Alerts</h1><p>Every suspicious thing Argus has spotted. Click any row to see the full details and what to do.</p></div>
         </div>
         <div class="toolbar card-bar">
           <div class="toolbar-left">
@@ -190,7 +175,7 @@
       <!-- INCIDENTS -->
       <section class="view" id="view-incidents" aria-label="Cases">
         <div class="page-head">
-          <div><h1>Cases</h1><p>Related alerts grouped together so you can work through them.</p></div>
+          <div><h1>Cases</h1><p>Related alerts grouped together into one case so you can investigate and close them out.</p></div>
         </div>
         <div class="toolbar">
           <div class="toolbar-left" id="incTabs" role="tablist">
@@ -216,7 +201,7 @@
       <!-- AGENTS -->
       <section class="view" id="view-agents" aria-label="Devices">
         <div class="page-head">
-          <div><h1>Devices</h1><p>Devices with Argus installed and watching.</p></div>
+          <div><h1>Devices</h1><p>All servers and machines that have Argus installed and are actively being monitored.</p></div>
         </div>
         <div class="toolbar">
           <div class="toolbar-left"><span class="muted" id="agentCount"></span></div>
@@ -232,170 +217,159 @@
         </div>
       </section>
 
-      <!-- COVERAGE -->
-      <section class="view" id="view-coverage" aria-label="Coverage">
+      <!-- INTELLIGENCE (merged Honeypot + Threat Intel + Coverage) -->
+      <section class="view" id="view-intel" aria-label="Intelligence">
         <div class="page-head">
-          <div><h1>Coverage</h1><p>The attack methods Argus can catch.</p></div>
+          <div><h1>Intelligence</h1><p>Attackers caught by the honeypot traps, known bad IPs and domains, and what attacks Argus can detect.</p></div>
         </div>
-        <div class="panel heatmap-panel">
-          <div class="panel-head chart-head">
-            <div class="panel-title">Attack map</div>
-            <div class="heatmap-scale"><span>Few alerts</span><span class="scale-bar"></span><span>Lots of alerts</span></div>
-          </div>
-          <div class="heatmap" id="attackHeatmap"></div>
-        </div>
-        <div class="toolbar card-bar">
-          <div class="toolbar-left">
-            <span class="coverage-stat"><strong id="covTechCount">0</strong> attack methods watched</span>
-            <span class="muted">by</span>
-            <span class="coverage-stat"><strong id="covRuleCount">0</strong> rules</span>
-          </div>
-          <div class="toolbar-right">
-            <input id="covSearch" class="input search" type="text" placeholder="Search attack method or rule..." aria-label="Filter coverage">
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table class="table" id="coverageTable">
-            <thead><tr><th>Attack method</th><th>Rules watching it</th><th>Count</th></tr></thead>
-            <tbody id="coverageBody"></tbody>
-          </table>
-          <div class="empty" id="coverageEmpty" hidden>No coverage data available.</div>
-        </div>
-      </section>
 
-      <!-- RULES -->
-      <section class="view" id="view-rules" aria-label="Rules">
-        <div class="page-head">
-          <div><h1>Rules</h1><p>The checks Argus runs on your devices, day and night.</p></div>
-        </div>
-        <div class="toolbar card-bar">
-          <div class="toolbar-left"><span class="muted" id="ruleCount"></span></div>
-          <div class="toolbar-right">
-            <input id="ruleSearch" class="input search" type="text" placeholder="Filter rules..." aria-label="Filter rules">
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table class="table" id="rulesTable">
-            <thead><tr><th>Rule</th><th>What it checks</th><th>Level</th><th>Attack</th><th>Type</th></tr></thead>
-            <tbody id="rulesBody"></tbody>
-          </table>
-          <div class="empty" id="rulesEmpty" hidden>No rules loaded.</div>
-        </div>
-      </section>
-
-      <!-- HONEYPOT -->
-      <section class="view" id="view-honeypot" aria-label="Honeypots">
-        <div class="page-head">
-          <div><h1>Honeypots</h1><p>Live deception sensors catching attackers in the act.</p></div>
-        </div>
+        <!-- Honeypot summary stats -->
         <div class="stat-grid" id="hpStatGrid"></div>
-        <div class="panel-grid overview-grid">
-          <div class="panel wide">
-            <div class="panel-head"><div class="panel-title">Recent attacker sessions</div></div>
-            <div class="table-wrap">
-              <table class="table" id="hpSessionsTable">
-                <thead><tr>
-                  <th>When</th><th>Source IP</th><th>Sensor</th><th>Protocol</th>
-                  <th>Success</th><th>Commands</th><th>Downloads</th><th>Categories</th>
-                </tr></thead>
-                <tbody id="hpSessionsBody"></tbody>
-              </table>
-              <div class="empty" id="hpSessionsEmpty" hidden>No sessions recorded yet — honeypots may still be warming up.</div>
+
+        <!-- Tab switcher -->
+        <div class="toolbar" style="margin-bottom:16px">
+          <div class="toolbar-left" id="intelTabs" role="tablist">
+            <button class="tab active" data-itab="honeypot">🪤 Honeypot Sessions</button>
+            <button class="tab" data-itab="threatintel">🔍 Known Bad IPs &amp; Domains</button>
+            <button class="tab" data-itab="coverage">🛡️ What We Can Detect</button>
+          </div>
+        </div>
+
+        <!-- HONEYPOT tab -->
+        <div id="itab-honeypot">
+          <div class="panel-grid overview-grid" style="margin-bottom:12px">
+            <div class="panel wide">
+              <div class="panel-head"><div class="panel-title">Recent attacker sessions</div>
+              <span class="muted small">Every time someone connects to the honeypot trap</span></div>
+              <div class="table-wrap">
+                <table class="table" id="hpSessionsTable">
+                  <thead><tr>
+                    <th>When</th><th>Attacker IP</th><th>Sensor</th><th>Protocol</th>
+                    <th>Got In?</th><th>Commands Run</th><th>Downloads</th><th>What they did</th>
+                  </tr></thead>
+                  <tbody id="hpSessionsBody"></tbody>
+                </table>
+                <div class="empty" id="hpSessionsEmpty" hidden>No attackers caught yet — the honeypot is waiting.</div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title">Most active attackers</div></div>
+              <div class="bar-list" id="hpTopIPs"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title">What attackers tried to do</div></div>
+              <div class="bar-list" id="hpCategories"></div>
             </div>
           </div>
           <div class="panel">
-            <div class="panel-head"><div class="panel-title">Top attacker IPs</div></div>
-            <div class="bar-list" id="hpTopIPs"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-head"><div class="panel-title">Attack categories</div></div>
-            <div class="bar-list" id="hpCategories"></div>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-head">
-            <div class="panel-title">Honeypot alerts</div>
-            <span class="muted small">These alerts were generated from deception sensor events</span>
-          </div>
-          <div class="table-wrap">
-            <table class="table" id="hpAlertsTable">
-              <thead><tr><th>Level</th><th>When</th><th>Alert</th><th>Sensor</th><th>Details</th></tr></thead>
-              <tbody id="hpAlertsBody"></tbody>
-            </table>
-            <div class="empty" id="hpAlertsEmpty" hidden>No honeypot alerts yet.</div>
+            <div class="panel-head">
+              <div class="panel-title">Alerts from honeypot</div>
+              <span class="muted small">Alerts triggered by attacker activity in the trap</span>
+            </div>
+            <div class="table-wrap">
+              <table class="table" id="hpAlertsTable">
+                <thead><tr><th>Level</th><th>When</th><th>What happened</th><th>Sensor</th><th>Details</th></tr></thead>
+                <tbody id="hpAlertsBody"></tbody>
+              </table>
+              <div class="empty" id="hpAlertsEmpty" hidden>No honeypot alerts yet.</div>
+            </div>
           </div>
         </div>
-      </section>
 
-      <!-- THREAT INTEL -->
-      <section class="view" id="view-threatintel" aria-label="Threat Intelligence">
-        <div class="page-head">
-          <div><h1>Threat Intelligence</h1><p>IOC database, threat events, and automated feed ingestion.</p></div>
-        </div>
-        <div class="stat-grid" id="tiStatGrid"></div>
-        <div class="panel-grid overview-grid">
+        <!-- THREAT INTEL tab -->
+        <div id="itab-threatintel" hidden>
+          <div class="stat-grid" id="tiStatGrid"></div>
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-head chart-head">
+              <div class="panel-title">Look up an IP, domain, or file hash</div>
+              <div class="toolbar-right">
+                <input id="tiLookupInput" class="input search" type="text" placeholder="e.g. 1.2.3.4 or evil.com" aria-label="IOC lookup" style="width:320px">
+                <button class="btn primary" id="tiLookupBtn">Look up</button>
+              </div>
+            </div>
+            <div id="tiLookupResult" class="ti-lookup-result"></div>
+          </div>
+          <div class="panel-grid overview-grid" style="margin-bottom:12px">
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title">IOC types</div></div>
+              <div class="bar-list" id="tiByType"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title">By reputation</div></div>
+              <div class="donut-wrap" id="tiRepDonut"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><div class="panel-title">Top sources</div></div>
+              <div class="bar-list" id="tiTopSources"></div>
+            </div>
+          </div>
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-head chart-head">
+              <div class="panel-title">Threat feeds</div>
+              <button class="btn" id="tiRunAllFeeds">Sync all feeds now</button>
+            </div>
+            <div class="table-wrap">
+              <table class="table" id="tiFeedsTable">
+                <thead><tr>
+                  <th>Feed name</th><th>Format</th><th>Type</th><th>Last run</th><th>IOC count</th><th>Status</th><th>Action</th>
+                </tr></thead>
+                <tbody id="tiFeedsBody"></tbody>
+              </table>
+            </div>
+          </div>
           <div class="panel">
             <div class="panel-head chart-head">
-              <div class="panel-title">IOC breakdown</div>
+              <div class="panel-title">Recent IOCs</div>
+              <div class="toolbar-right">
+                <select id="tiRepFilter" class="input" style="width:160px">
+                  <option value="">All reputations</option>
+                  <option value="malicious">Malicious</option>
+                  <option value="suspicious">Suspicious</option>
+                  <option value="clean">Clean</option>
+                </select>
+                <a href="/api/ti/v1/export/csv?x-api-key=argus-dev-key" id="tiExportCsv" class="btn" download="sentinel-iocs.csv">Export CSV</a>
+              </div>
             </div>
-            <div class="bar-list" id="tiByType"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-head"><div class="panel-title">By reputation</div></div>
-            <div class="donut-wrap" id="tiRepDonut"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-head"><div class="panel-title">Top sources</div></div>
-            <div class="bar-list" id="tiTopSources"></div>
+            <div class="table-wrap">
+              <table class="table" id="tiIocTable">
+                <thead><tr>
+                  <th>Type</th><th>Value</th><th>Reputation</th><th>Score</th><th>Source</th><th>Last seen</th>
+                </tr></thead>
+                <tbody id="tiIocBody"></tbody>
+              </table>
+              <div class="empty" id="tiIocEmpty" hidden>No IOCs yet. Click "Sync all feeds" above to load them.</div>
+            </div>
           </div>
         </div>
-        <div class="panel">
-          <div class="panel-head chart-head">
-            <div class="panel-title">IOC Search</div>
+
+        <!-- COVERAGE tab -->
+        <div id="itab-coverage" hidden>
+          <div class="toolbar card-bar" style="margin-bottom:12px">
+            <div class="toolbar-left">
+              <span class="coverage-stat"><strong id="covTechCount">0</strong> attack types covered</span>
+              <span class="muted">by</span>
+              <span class="coverage-stat"><strong id="covRuleCount">0</strong> detection rules</span>
+            </div>
             <div class="toolbar-right">
-              <input id="tiLookupInput" class="input search" type="text" placeholder="Search IP, domain, hash, URL..." aria-label="IOC lookup" style="width:320px">
-              <button class="btn primary" id="tiLookupBtn">Look up</button>
+              <input id="covSearch" class="input search" type="text" placeholder="Search attack type or rule..." aria-label="Filter coverage">
             </div>
           </div>
-          <div id="tiLookupResult" class="ti-lookup-result"></div>
-        </div>
-        <div class="panel">
-          <div class="panel-head chart-head">
-            <div class="panel-title">Configured feeds</div>
-            <button class="btn" id="tiRunAllFeeds">Sync all feeds now</button>
+          <div class="panel heatmap-panel">
+            <div class="panel-head chart-head">
+              <div class="panel-title">Attack coverage map</div>
+              <div class="heatmap-scale"><span>Few alerts</span><span class="scale-bar"></span><span>Lots of alerts</span></div>
+            </div>
+            <div class="heatmap" id="attackHeatmap"></div>
           </div>
           <div class="table-wrap">
-            <table class="table" id="tiFeedsTable">
-              <thead><tr>
-                <th>Feed name</th><th>Format</th><th>Type</th><th>Last run</th><th>IOC count</th><th>Status</th><th>Action</th>
-              </tr></thead>
-              <tbody id="tiFeedsBody"></tbody>
+            <table class="table" id="coverageTable">
+              <thead><tr><th>Attack type</th><th>Rules watching it</th><th>Alert count</th></tr></thead>
+              <tbody id="coverageBody"></tbody>
             </table>
+            <div class="empty" id="coverageEmpty" hidden>No coverage data available.</div>
           </div>
         </div>
-        <div class="panel">
-          <div class="panel-head chart-head">
-            <div class="panel-title">Recent IOCs</div>
-            <div class="toolbar-right">
-              <select id="tiRepFilter" class="input" style="width:140px">
-                <option value="">All reputations</option>
-                <option value="malicious">Malicious</option>
-                <option value="suspicious">Suspicious</option>
-                <option value="clean">Clean</option>
-              </select>
-              <a href="/api/ti/v1/export/csv?x-api-key=argus-dev-key" id="tiExportCsv" class="btn" download="argus-iocs.csv">Export CSV</a>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table class="table" id="tiIocTable">
-              <thead><tr>
-                <th>Type</th><th>Value</th><th>Reputation</th><th>Score</th><th>Source</th><th>Last seen</th>
-              </tr></thead>
-              <tbody id="tiIocBody"></tbody>
-            </table>
-            <div class="empty" id="tiIocEmpty" hidden>No IOCs loaded yet. Run feeds to populate.</div>
-          </div>
-        </div>
+
       </section>
 
     </main>

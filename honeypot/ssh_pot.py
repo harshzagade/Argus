@@ -1,15 +1,15 @@
-"""Argus SSH Honeypot — inspired by Cowrie (github.com/cowrie/cowrie, ~6k stars).
+"""Sentinel SSH Honeypot — inspired by Cowrie (github.com/cowrie/cowrie, ~6k stars).
 
 Emulates an SSH server that accepts any credentials after N failures, logs every
 command the attacker runs, captures file uploads, and ships all sessions as
-structured events to the Argus/Argus ingest endpoint.
+structured events to the Sentinel/Argus ingest endpoint.
 
 Architecture:
     AsyncSSHServer (asyncio, paramiko socket shim)
     -> SessionHandler (per-connection state machine)
     -> CommandEmulator (fake filesystem responses)
     -> SessionStore (in-memory + JSONL on disk)
-    -> ArgusShipper (batches events -> POST /api/v1/events)
+    -> SentinelShipper (batches events -> POST /api/v1/events)
 
 Requires: paramiko>=3.0
 """
@@ -26,7 +26,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-log = logging.getLogger("argus.honeypot.ssh")
+log = logging.getLogger("sentinel.honeypot.ssh")
 
 # ---------------------------------------------------------------------------
 # Fake filesystem and command emulator
@@ -309,7 +309,7 @@ class HoneypotSession:
 # ---------------------------------------------------------------------------
 
 class SessionStore:
-    def __init__(self, spool_dir: str = "/tmp/argus-honeypot"):
+    def __init__(self, spool_dir: str = "/tmp/sentinel-honeypot"):
         self.spool_dir = Path(spool_dir)
         self.spool_dir.mkdir(parents=True, exist_ok=True)
         self._sessions: dict[str, HoneypotSession] = {}
@@ -349,7 +349,7 @@ class SessionStore:
 
 
 # ---------------------------------------------------------------------------
-# Argus shipper: converts closed sessions -> Argus events
+# Sentinel shipper: converts closed sessions -> Argus events
 # ---------------------------------------------------------------------------
 
 class HoneypotShipper:
@@ -425,10 +425,11 @@ class HoneypotShipper:
                     "action": "started",
                     "exe": cmd_entry["cmd"].split()[0] if cmd_entry["cmd"] else "",
                     "cmdline": cmd_entry["cmd"],
-                    "src_ip": sess["src_ip"],
                     "user": sess.get("success_user", "unknown"),
                     "pid": 0,
                     "ppid": 0,
+                    "src_ip": sess["src_ip"],
+                    "src_port": sess["src_port"],
                     "honeypot": True,
                     "session_id": sess["session_id"],
                     "category": cmd_entry.get("category", "unknown"),
@@ -585,39 +586,36 @@ class _SSHServerInterface(paramiko.ServerInterface if _HAS_PARAMIKO else object)
         return True
 
 
-def _handle_ssh_client_sync(client_sock, store: SessionStore,
-                            honeypot_id: str, host_key,
-                            max_login_tries: int):
-    """Blocking handler for one SSH connection (runs in its own thread).
+def _handle_ssh_client_thread(sock, addr, store: SessionStore,
+                               honeypot_id: str, host_key,
+                               max_login_tries: int):
+    """Threaded handler for one incoming SSH TCP connection.
 
-    paramiko's Transport is blocking, so it cannot run inside an asyncio
-    coroutine on a non-blocking asyncio socket — the banner exchange dies
-    and the connection resets. A plain threaded listener avoids that.
+    Runs paramiko directly on the raw socket — no asyncio shim needed,
+    so the SSH banner exchange completes reliably.
     """
     import paramiko
-    try:
-        src_ip, src_port = client_sock.getpeername()
-    except Exception:
-        src_ip, src_port = "0.0.0.0", 0
+    import re as _re
+    src_ip, src_port = addr[0], addr[1]
     sess = store.new_session(src_ip, src_port, honeypot_id, "ssh")
     fs = FakeFS()
     emulator = CommandEmulator(fs, src_ip, sess.id)
-
     transport = None
     try:
-        transport = paramiko.Transport(client_sock)
+        transport = paramiko.Transport(sock)
         transport.add_server_key(host_key)
         server_iface = _SSHServerInterface(sess, max_tries=max_login_tries)
         transport.start_server(server=server_iface)
 
         chan = transport.accept(timeout=20)
         if chan is None:
+            log.warning("[%s] no channel opened (client disconnected during auth)", sess.id)
             return
 
         # Send MOTD
         ts_str = datetime.now().strftime("%a %b %d %H:%M:%S %Y")
         chan.send(MOTD.format(ts=ts_str, ip=src_ip).encode())
-        chan.send(f"root@ubuntu-server:~# ".encode())
+        chan.send(b"root@ubuntu-server:~# ")
 
         buf = b""
         while transport.is_active():
@@ -647,53 +645,56 @@ def _handle_ssh_client_sync(client_sock, store: SessionStore,
                     chan.send(b"logout\r\n")
                     chan.close()
                     break
-                # Check for downloads
                 if category == "download":
-                    import re
-                    urls = re.findall(r"https?://[^\s]+", line)
-                    for u in urls:
+                    for u in _re.findall(r"https?://[^\s]+", line):
                         sess.add_download(u)
-                chan.send(f"root@ubuntu-server:~# ".encode())
+                chan.send(b"root@ubuntu-server:~# ")
 
     except Exception as e:
         log.warning("[%s] SSH handler error: %s", sess.id, e)
     finally:
         if transport:
-            transport.close()
-        store.close_session(sess)
+            try:
+                transport.close()
+            except Exception:
+                pass
         try:
-            client_sock.close()
+            sock.close()
         except Exception:
             pass
+        store.close_session(sess)
 
 
 class SSHHoneypot:
     """
     Medium-interaction SSH honeypot inspired by Cowrie.
     Accepts any credential after max_login_tries failed attempts,
-    emulates a bash shell, logs every command, and ships sessions to Argus.
+    emulates a bash shell, logs every command, and ships sessions to Sentinel.
+
+    Runs as a plain threaded TCP server — one thread per connection.
+    Paramiko operates directly on the raw socket so the SSH handshake
+    completes reliably without asyncio interference.
     """
 
     def __init__(self, host: str = "0.0.0.0", port: int = 2222,
                  honeypot_id: str = "honeypot-ssh-01",
-                 host_key_path: str = "/tmp/argus-ssh-host-key",
-                 argus_server: str = "http://localhost:8000",
-                 argus_api_key: str = "argus-dev-key",
-                 spool_dir: str = "/tmp/argus-honeypot",
+                 host_key_path: str = "/tmp/sentinel-ssh-host-key",
+                 sentinel_server: str = "http://localhost:8000",
+                 sentinel_api_key: str = "argus-dev-key",
+                 spool_dir: str = "/tmp/sentinel-honeypot",
                  max_login_tries: int = 3):
         self.host = host
         self.port = port
         self.honeypot_id = honeypot_id
         self.host_key_path = host_key_path
-        self.argus_server = argus_server
-        self.argus_api_key = argus_api_key
+        self.sentinel_server = sentinel_server
+        self.sentinel_api_key = sentinel_api_key
         self.spool_dir = spool_dir
         self.max_login_tries = max_login_tries
 
         self.store = SessionStore(spool_dir)
-        self.shipper = HoneypotShipper(argus_server, argus_api_key,
+        self.shipper = HoneypotShipper(sentinel_server, sentinel_api_key,
                                        honeypot_id, self.store)
-        self._server = None
         self._host_key = None
 
     def start(self):
@@ -702,24 +703,25 @@ class SSHHoneypot:
             return
         self._host_key = _generate_host_key(self.host_key_path)
         self.shipper.start()
-        self._serve()
 
-    def _serve(self):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind((self.host, self.port))
-        srv.listen(50)
-        log.info("SSH honeypot listening on %s", srv.getsockname())
+        srv.listen(100)
+        log.info("SSH honeypot listening on %s:%d", self.host, self.port)
+
         while True:
             try:
-                client, _addr = srv.accept()
-            except OSError:
+                conn, addr = srv.accept()
+            except Exception as e:
+                log.warning("SSH accept error: %s", e)
                 break
             t = threading.Thread(
-                target=_handle_ssh_client_sync,
-                args=(client, self.store, self.honeypot_id,
+                target=_handle_ssh_client_thread,
+                args=(conn, addr, self.store, self.honeypot_id,
                       self._host_key, self.max_login_tries),
-                daemon=True)
+                daemon=True,
+            )
             t.start()
 
 
@@ -731,21 +733,21 @@ class HTTPHoneypot:
     """
     Low-interaction HTTP honeypot.
     Emulates common web application login pages and admin panels,
-    captures credentials and payloads, ships to Argus.
+    captures credentials and payloads, ships to Sentinel.
     """
 
     def __init__(self, host: str = "0.0.0.0", port: int = 8080,
                  honeypot_id: str = "honeypot-http-01",
-                 argus_server: str = "http://localhost:8000",
-                 argus_api_key: str = "argus-dev-key",
-                 spool_dir: str = "/tmp/argus-honeypot"):
+                 sentinel_server: str = "http://localhost:8000",
+                 sentinel_api_key: str = "argus-dev-key",
+                 spool_dir: str = "/tmp/sentinel-honeypot"):
         self.host = host
         self.port = port
         self.honeypot_id = honeypot_id
-        self.argus_server = argus_server.rstrip("/")
-        self.argus_api_key = argus_api_key
+        self.sentinel_server = sentinel_server.rstrip("/")
+        self.sentinel_api_key = sentinel_api_key
         self.store = SessionStore(spool_dir)
-        self.shipper = HoneypotShipper(argus_server, argus_api_key,
+        self.shipper = HoneypotShipper(sentinel_server, sentinel_api_key,
                                        honeypot_id, self.store)
         self._sessions_by_ip: dict[str, HoneypotSession] = {}
 

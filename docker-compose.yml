@@ -1,22 +1,23 @@
 services:
 
   # ─────────────────────────────────────────────────────────────
-  # Argus Core  — SIEM + Threat Intel Platform on port 8000
+  # Sentinel Core  — SIEM + Threat Intel Platform on port 8000
   # ─────────────────────────────────────────────────────────────
-  argus:
+  sentinel:
     build:
       context: .
-      dockerfile: Dockerfile.argus
+      dockerfile: Dockerfile.sentinel
     ports:
       - "8000:8000"
     volumes:
-      - argus-data:/data
+      - sentinel-data:/data
     environment:
       ARGUS_API_KEY:           ${ARGUS_API_KEY:-argus-dev-key}
+      SENTINEL_API_KEY:        ${ARGUS_API_KEY:-argus-dev-key}
       ARGUS_DB:                /data/argus.db
-      ARGUS_TI_DB:          /data/argus-ti.db
-      ARGUS_TI_FEED_INTERVAL: ${TI_FEED_INTERVAL:-3600}
-      ARGUS_TI_URL:         http://localhost:8000   # self-referencing enrichment
+      SENTINEL_TI_DB:          /data/sentinel-ti.db
+      SENTINEL_TI_FEED_INTERVAL: ${TI_FEED_INTERVAL:-3600}
+      SENTINEL_TI_URL:         http://localhost:8000   # self-referencing enrichment
       # Optional: real LLM triage
       # ANTHROPIC_API_KEY:     ${ANTHROPIC_API_KEY:-}
       # OPENAI_API_KEY:        ${OPENAI_API_KEY:-}
@@ -25,37 +26,37 @@ services:
       # VT_KEY:                ${VT_KEY:-}
     healthcheck:
       test: ["CMD", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/argus/health')"]
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/sentinel/health')"]
       interval: 15s
       timeout: 5s
       retries: 6
 
   # ─────────────────────────────────────────────────────────────
-  # Argus Honeypot — SSH (port 2222) + HTTP (port 8080)
+  # Sentinel Honeypot — SSH (port 2222) + HTTP (port 8080)
   # ─────────────────────────────────────────────────────────────
   honeypot:
     build:
       context: .
-      dockerfile: Dockerfile.argus
+      dockerfile: Dockerfile.sentinel
     ports:
       - "2222:2222"     # SSH honeypot (redirect real SSH to another port first!)
       - "8080:8080"     # HTTP honeypot
     volumes:
-      - argus-data:/data
+      - sentinel-data:/data
     depends_on:
-      argus:
+      sentinel:
         condition: service_healthy
     environment:
-      ARGUS_SERVER:          http://argus:8000
-      ARGUS_API_KEY:         ${ARGUS_API_KEY:-argus-dev-key}
-      ARGUS_HONEYPOT_ID:     honeypot-01
+      SENTINEL_SERVER:          http://sentinel:8000
+      SENTINEL_API_KEY:         ${ARGUS_API_KEY:-argus-dev-key}
+      SENTINEL_HONEYPOT_ID:     honeypot-01
       HONEYPOT_SSH_PORT:        2222
       HONEYPOT_HTTP_PORT:       8080
       HONEYPOT_SPOOL_DIR:       /data/honeypot-spool
       HONEYPOT_MAX_LOGIN_TRIES: 3
     command: >
       python -m honeypot.honeypot_server
-      --server http://argus:8000
+      --server http://sentinel:8000
       --api-key ${ARGUS_API_KEY:-argus-dev-key}
       --honeypot-id honeypot-01
       --spool-dir /data/honeypot-spool
@@ -67,21 +68,21 @@ services:
   simulator:
     build:
       context: .
-      dockerfile: Dockerfile.argus
+      dockerfile: Dockerfile.sentinel
     profiles: ["demo"]
     depends_on:
-      argus:
+      sentinel:
         condition: service_healthy
     environment:
-      ARGUS_SERVER:   http://argus:8000
+      ARGUS_SERVER:   http://sentinel:8000
       ARGUS_API_KEY:  ${ARGUS_API_KEY:-argus-dev-key}
     command: >
       bash -c "
-        echo '[*] Waiting for Argus to be ready...' &&
+        echo '[*] Waiting for Sentinel to be ready...' &&
         sleep 5 &&
-        python simulator/simulate.py --server http://argus:8000 --all &&
+        python simulator/simulate.py --server http://sentinel:8000 --all &&
         echo '[+] Demo scenarios complete! Open http://localhost:8000'
       "
 
 volumes:
-  argus-data:
+  sentinel-data:

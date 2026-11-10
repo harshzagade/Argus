@@ -199,7 +199,7 @@ if __name__ == "__main__":
 
 
 # ────────────────────────────────────────────────────────────────────
-# Argus extensions: honeypot + threat-intel simulation scenarios
+# Sentinel extensions: honeypot + threat-intel simulation scenarios
 # ────────────────────────────────────────────────────────────────────
 
 HONEYPOT_AGENT = "honeypot-01-ssh"
@@ -271,9 +271,9 @@ def honeypot_http_session(a):
 
 
 def ti_seed_iocs(_a):
-    """Push known-bad IOCs to the Argus TI platform (if running)."""
+    """Push known-bad IOCs to the Sentinel TI platform (if running)."""
     import urllib.request, json
-    ti_url = os.environ.get("ARGUS_TI_URL", SERVER).rstrip("/") + "/api/ti/v1/iocs/bulk"
+    ti_url = os.environ.get("SENTINEL_TI_URL", SERVER).rstrip("/") + "/api/ti/v1/iocs/bulk"
     iocs = [
         {"value": ATTACKER_IP, "score": 95, "reputation": "malicious",
          "description": "Known attacker IP seen in honeypot session", "source": "honeypot-demo"},
@@ -286,7 +286,7 @@ def ti_seed_iocs(_a):
         {"value": "a" * 64, "score": 90, "reputation": "malicious",
          "description": "Known ransomware hash (demo)", "source": "demo-feed"},
     ]
-    payload = json.dumps({"iocs": iocs, "source": "argus-demo"}).encode()
+    payload = json.dumps({"iocs": iocs, "source": "sentinel-demo"}).encode()
     req = urllib.request.Request(
         ti_url, data=payload,
         headers={"X-API-Key": API_KEY, "content-type": "application/json"})
@@ -302,5 +302,5 @@ def ti_seed_iocs(_a):
 SCENARIOS.update({
     "honeypot-ssh": ("Full attacker SSH honeypot session", honeypot_ssh_session),
     "honeypot-http": ("HTTP honeypot SQLi + webshell + credential probes", honeypot_http_session),
-    "ti-seed": ("Seed Argus TI platform with demo IOCs", ti_seed_iocs),
+    "ti-seed": ("Seed Sentinel TI platform with demo IOCs", ti_seed_iocs),
 })

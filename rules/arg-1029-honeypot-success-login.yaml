@@ -1,6 +1,6 @@
 - id: ARG-1029
   name: Honeypot successful login
-  description: An attacker successfully authenticated to the Argus SSH honeypot after multiple failed attempts. The host is a deception sensor — any successful login is intentionally malicious and confirms active attacker presence.
+  description: An attacker successfully authenticated to the Sentinel SSH honeypot after multiple failed attempts. The host is a deception sensor — any successful login is intentionally malicious and confirms active attacker presence.
   severity: critical
   mitre: [T1110.001, T1078]
   compliance:

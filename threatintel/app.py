@@ -1,7 +1,7 @@
-"""Argus Threat Intelligence Platform — FastAPI application.
+"""Sentinel Threat Intelligence Platform — FastAPI application.
 
 Exposes a REST API inspired by MISP's data model but much simpler and
-purpose-built to integrate with the Argus/Argus SIEM ecosystem.
+purpose-built to integrate with the Sentinel/Argus SIEM ecosystem.
 
 Endpoints:
     GET  /api/ti/v1/health
@@ -39,14 +39,14 @@ from .db import ThreatIntelDB, _now
 from .feeds import FeedScheduler, classify_value
 
 BASE = Path(__file__).resolve().parent.parent
-TI_API_KEY = os.environ.get("ARGUS_API_KEY", os.environ.get("ARGUS_API_KEY", "argus-dev-key"))
-TI_DB_PATH = os.environ.get("ARGUS_TI_DB", str(BASE / "argus-ti.db"))
-TI_FEED_INTERVAL = float(os.environ.get("ARGUS_TI_FEED_INTERVAL", "3600"))
+TI_API_KEY = os.environ.get("SENTINEL_API_KEY", os.environ.get("ARGUS_API_KEY", "argus-dev-key"))
+TI_DB_PATH = os.environ.get("SENTINEL_TI_DB", str(BASE / "sentinel-ti.db"))
+TI_FEED_INTERVAL = float(os.environ.get("SENTINEL_TI_FEED_INTERVAL", "3600"))
 
 ti_db = ThreatIntelDB(TI_DB_PATH)
 scheduler = FeedScheduler(ti_db, default_interval=TI_FEED_INTERVAL)
 
-app = FastAPI(title="Argus Threat Intelligence Platform", version="1.0.0")
+app = FastAPI(title="Sentinel Threat Intelligence Platform", version="1.0.0")
 
 
 def check_key(x_api_key: str | None):
@@ -329,7 +329,7 @@ def export_csv(reputation: str = None,
     return PlainTextResponse(
         content=output.getvalue(),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=argus-iocs.csv"}
+        headers={"Content-Disposition": "attachment; filename=sentinel-iocs.csv"}
     )
 
 
@@ -395,7 +395,7 @@ def export_stix(reputation: str = None,
 
     bundle = {
         "type": "bundle",
-        "id": "bundle--argus-export",
+        "id": "bundle--sentinel-export",
         "spec_version": "2.1",
         "objects": objects,
     }
@@ -403,7 +403,7 @@ def export_stix(reputation: str = None,
 
 
 # ---------------------------------------------------------------------------
-# Argus enrichment bridge (called by Argus server/enrich.py)
+# Sentinel enrichment bridge (called by Argus server/enrich.py)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/ti/v1/enrich")
@@ -417,7 +417,7 @@ def enrich_entities(body: LookupRequest, x_api_key: str | None = Header(default=
             "type": ioc.get("type"),
             "reputation": ioc.get("reputation", "unknown"),
             "score": ioc.get("score", 0),
-            "sources": [ioc.get("source", "argus-ti")],
+            "sources": [ioc.get("source", "sentinel-ti")],
             "confidence": ioc.get("confidence", "medium"),
             "description": ioc.get("description", ""),
             "tlp": ioc.get("tlp", "white"),

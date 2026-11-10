@@ -1,5 +1,5 @@
 """Threat-intel auto-enrichment. Query order:
-  1. Argus TI Platform (if ARGUS_TI_URL is set) — local IOC database
+  1. Sentinel TI Platform (if SENTINEL_TI_URL is set) — local IOC database
   2. AbuseIPDB (if ABUSEIPDB_KEY is set)
   3. VirusTotal (if VT_KEY is set)
   4. GreyNoise (always tried, free tier)
@@ -71,14 +71,14 @@ def _http_json(url, headers=None, timeout=5):
         return json.loads(r.read().decode())
 
 
-# --- Argus TI Platform adapter ---
+# --- Sentinel TI Platform adapter ---
 
-def _argus_ti(value: str, kind: str) -> dict | None:
-    """Query the local Argus Threat Intel Platform for an IOC."""
-    base_url = os.environ.get("ARGUS_TI_URL", "").rstrip("/")
+def _sentinel_ti(value: str, kind: str) -> dict | None:
+    """Query the local Sentinel Threat Intel Platform for an IOC."""
+    base_url = os.environ.get("SENTINEL_TI_URL", "").rstrip("/")
     if not base_url:
         return None
-    api_key = os.environ.get("ARGUS_API_KEY", "argus-dev-key")
+    api_key = os.environ.get("SENTINEL_API_KEY", os.environ.get("ARGUS_API_KEY", "argus-dev-key"))
     try:
         body = json.dumps({"values": [value]}).encode("utf-8")
         req = urllib.request.Request(
@@ -96,7 +96,7 @@ def _argus_ti(value: str, kind: str) -> dict | None:
                 "type": hit.get("type", kind),
                 "reputation": hit.get("reputation", "unknown"),
                 "score": hit.get("score", 0),
-                "sources": hit.get("sources", ["argus-ti"]),
+                "sources": hit.get("sources", ["sentinel-ti"]),
                 "confidence": hit.get("confidence", "medium"),
                 "description": hit.get("description", ""),
                 "tlp": hit.get("tlp", "white"),
@@ -176,11 +176,11 @@ def enrich(db, alert: dict) -> dict:
             continue
         intel = None
         if kind == "ip":
-            intel = _argus_ti(v, "ip") or _abuseipdb(v) or _virustotal(v, True) or _greynoise(v) or _mock_ip(v)
+            intel = _sentinel_ti(v, "ip") or _abuseipdb(v) or _virustotal(v, True) or _greynoise(v) or _mock_ip(v)
         elif kind == "domain":
-            intel = _argus_ti(v, "domain") or _virustotal(v, False) or _mock_domain(v)
+            intel = _sentinel_ti(v, "domain") or _virustotal(v, False) or _mock_domain(v)
         else:
-            intel = _argus_ti(v, kind) or _mock_hash(v)
+            intel = _sentinel_ti(v, kind) or _mock_hash(v)
         db.kv_set(ckey, {"at": datetime.now(timezone.utc).isoformat(), "intel": intel})
         out[name] = intel
     return out
