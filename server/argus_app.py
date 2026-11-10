@@ -67,7 +67,7 @@ def argus_health():
                 "db": os.path.basename(os.environ.get("ARGUS_TI_DB", "argus-ti.db")),
             },
             "honeypot": {
-                "status": "configured",
+                "status": "external",
                 "note": "Start honeypot/honeypot_server.py separately on ports 2222/8080",
             },
         },

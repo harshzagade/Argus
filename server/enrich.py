@@ -1,5 +1,5 @@
 """Threat-intel auto-enrichment. Query order:
-  1. Sentinel TI Platform (if SENTINEL_TI_URL is set) — local IOC database
+  1. Argus TI Platform — local IOC database, in-process first
   2. AbuseIPDB (if ABUSEIPDB_KEY is set)
   3. VirusTotal (if VT_KEY is set)
   4. GreyNoise (always tried, free tier)
@@ -71,11 +71,52 @@ def _http_json(url, headers=None, timeout=5):
         return json.loads(r.read().decode())
 
 
-# --- Sentinel TI Platform adapter ---
+# --- Argus TI Platform adapter ---
 
-def _sentinel_ti(value: str, kind: str) -> dict | None:
-    """Query the local Sentinel Threat Intel Platform for an IOC."""
-    base_url = os.environ.get("SENTINEL_TI_URL", "").rstrip("/")
+_local_ti_db = None
+
+
+def _local_ti(value: str) -> dict | None:
+    """Query the local TI database in-process (no HTTP self-call).
+
+    In the unified deployment the TI store lives in the same process; the
+    old HTTP call to our own server could deadlock/timeout and silently
+    degrade enrichment. Falls back to None when no local DB is present.
+    """
+    global _local_ti_db
+    try:
+        if _local_ti_db is None:
+            from pathlib import Path as _P
+            base = _P(__file__).resolve().parent.parent
+            path = (os.environ.get("ARGUS_TI_DB") or os.environ.get("SENTINEL_TI_DB")
+                    or str(base / "argus-ti.db"))
+            if not _P(path).exists():
+                return None
+            from threatintel.db import ThreatIntelDB
+            _local_ti_db = ThreatIntelDB(path)
+        hit = _local_ti_db.lookup(value)
+        if not hit:
+            return None
+        return {
+            "type": hit.get("type", ""),
+            "reputation": hit.get("reputation", "unknown"),
+            "score": hit.get("score", 0),
+            "sources": [hit.get("source", "argus-ti")],
+            "confidence": hit.get("confidence", "medium"),
+            "description": hit.get("description", ""),
+            "tlp": hit.get("tlp", "white"),
+            "context": hit.get("context", {}),
+        }
+    except Exception:
+        return None
+
+
+def _argus_ti(value: str, kind: str) -> dict | None:
+    """Query the local Argus Threat Intel Platform for an IOC."""
+    local = _local_ti(value)
+    if local is not None:
+        return local
+    base_url = (os.environ.get("ARGUS_TI_URL") or os.environ.get("SENTINEL_TI_URL", "")).rstrip("/")
     if not base_url:
         return None
     api_key = os.environ.get("SENTINEL_API_KEY", os.environ.get("ARGUS_API_KEY", "argus-dev-key"))
@@ -144,6 +185,10 @@ def _virustotal(v, is_ip):
 
 
 def _greynoise(v):
+    # Opt-in only: GreyNoise receives every enriched IP by default otherwise,
+    # which leaks the addresses an organization is investigating.
+    if os.environ.get("ARGUS_GREYNOISE", "") != "1":
+        return None
     try:
         data = _http_json(f"https://api.greynoise.io/v3/community/{v}", timeout=5)
         cls = data.get("classification", "unknown")
@@ -175,12 +220,18 @@ def enrich(db, alert: dict) -> dict:
             out[name] = cached["intel"]
             continue
         intel = None
+        demo = os.environ.get("ARGUS_DEMO_INTEL", "") == "1"
         if kind == "ip":
-            intel = _sentinel_ti(v, "ip") or _abuseipdb(v) or _virustotal(v, True) or _greynoise(v) or _mock_ip(v)
+            intel = _argus_ti(v, "ip") or _abuseipdb(v) or _virustotal(v, True) or _greynoise(v) or (_mock_ip(v) if demo else None)
         elif kind == "domain":
-            intel = _sentinel_ti(v, "domain") or _virustotal(v, False) or _mock_domain(v)
+            intel = _argus_ti(v, "domain") or _virustotal(v, False) or (_mock_domain(v) if demo else None)
         else:
-            intel = _sentinel_ti(v, kind) or _mock_hash(v)
+            intel = _argus_ti(v, kind) or (_mock_hash(v) if demo else None)
+        if intel is None:
+            # Honest unknown: no source had data. Do NOT fabricate a verdict
+            # and do NOT cache it for 24h — a real source may answer later.
+            out[name] = {"type": kind, "reputation": "unknown", "score": 0, "sources": []}
+            continue
         db.kv_set(ckey, {"at": datetime.now(timezone.utc).isoformat(), "intel": intel})
         out[name] = intel
     return out

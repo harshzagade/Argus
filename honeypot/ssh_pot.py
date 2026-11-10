@@ -1,15 +1,15 @@
-"""Sentinel SSH Honeypot — inspired by Cowrie (github.com/cowrie/cowrie, ~6k stars).
+"""Argus SSH Honeypot — inspired by Cowrie (github.com/cowrie/cowrie, ~6k stars).
 
 Emulates an SSH server that accepts any credentials after N failures, logs every
 command the attacker runs, captures file uploads, and ships all sessions as
-structured events to the Sentinel/Argus ingest endpoint.
+structured events to the Argus ingest endpoint.
 
 Architecture:
     AsyncSSHServer (asyncio, paramiko socket shim)
     -> SessionHandler (per-connection state machine)
     -> CommandEmulator (fake filesystem responses)
     -> SessionStore (in-memory + JSONL on disk)
-    -> SentinelShipper (batches events -> POST /api/v1/events)
+    -> ArgusShipper (batches events -> POST /api/v1/events)
 
 Requires: paramiko>=3.0
 """
@@ -349,7 +349,7 @@ class SessionStore:
 
 
 # ---------------------------------------------------------------------------
-# Sentinel shipper: converts closed sessions -> Argus events
+# Argus shipper: converts closed sessions -> Argus events
 # ---------------------------------------------------------------------------
 
 class HoneypotShipper:
@@ -503,6 +503,15 @@ class HoneypotShipper:
                 "categories": cats,
                 "downloads": len(sess.get("downloads", [])),
                 "uploads": len(sess.get("uploads", [])),
+                # Structured session record so the dashboard can show the
+                # real session instead of reconstructing it from alerts.
+                "src_ip": sess["src_ip"],
+                "protocol": sess.get("protocol", "ssh"),
+                "success_user": sess.get("success_user"),
+                "login_attempts": len(sess.get("login_attempts", [])),
+                "duration_s": round(sess.get("duration", 0), 1),
+                "command_count": len(sess.get("commands", [])),
+                "commands": [c.get("cmd", "") for c in sess.get("commands", [])][:50],
             },
             "raw": summary
         })
@@ -669,7 +678,7 @@ class SSHHoneypot:
     """
     Medium-interaction SSH honeypot inspired by Cowrie.
     Accepts any credential after max_login_tries failed attempts,
-    emulates a bash shell, logs every command, and ships sessions to Sentinel.
+    emulates a bash shell, logs every command, and ships sessions to Argus.
 
     Runs as a plain threaded TCP server — one thread per connection.
     Paramiko operates directly on the raw socket so the SSH handshake
@@ -733,7 +742,7 @@ class HTTPHoneypot:
     """
     Low-interaction HTTP honeypot.
     Emulates common web application login pages and admin panels,
-    captures credentials and payloads, ships to Sentinel.
+    captures credentials and payloads, ships to Argus.
     """
 
     def __init__(self, host: str = "0.0.0.0", port: int = 8080,

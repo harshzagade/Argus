@@ -439,7 +439,11 @@ function filteredAlerts() {
 function exportAlertsCsv() {
   const rows = filteredAlerts();
   const head = ['id', 'time', 'severity', 'title', 'rule_id', 'rule_name', 'agent_id', 'hostname', 'mitre'];
-  const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const q = (v) => {
+    let s = String(v == null ? '' : v);
+    if (/^\s*[=+\-@]/.test(s)) s = "'" + s; // neutralize CSV formula injection
+    return '"' + s.replace(/"/g, '""') + '"';
+  };
   const lines = [head.join(',')].concat(rows.map((a) =>
     [a.id, a.ts, a.severity, a.title, a.rule_id, a.rule_name, a.agent_id, a.hostname,
      (a.mitre || []).join(';')].map(q).join(',')));
@@ -802,7 +806,8 @@ function renderCoverage() {
   const rows = Object.entries(cov)
     .sort((a, b) => a[0].localeCompare(b[0]))
     .filter(([t, ids]) => !q || t.toLowerCase().includes(q) ||
-      ids.some((id) => String(id).toLowerCase().includes(q)));
+      ids.some((id) => String(id).toLowerCase().includes(q) ||
+        String(nameById[id] || '').toLowerCase().includes(q)));
   $('coverageBody').innerHTML = rows.map(([t, ids]) =>
     `<tr><td>${mitreChip(t)}</td>` +
     `<td>${ids.map((id) => `<span class="chip" title="${esc(nameById[id] || id)}">${esc(id)}</span>`).join('')}</td>` +
@@ -812,29 +817,13 @@ function renderCoverage() {
 }
 LOADERS.coverage = loadCoverage;
 
-/* ---------------- RULES ---------------- */
-async function loadRules() {
-  await ensureRules();
-  renderRules();
-}
-function renderRules() {
-  const q = $('ruleSearch').value.trim().toLowerCase();
-  const rows = S.rules.filter((r) => !q ||
-    [r.id, r.name, r.severity, r.source, (r.mitre || []).join(' ')].join(' ').toLowerCase().includes(q));
-  $('rulesBody').innerHTML = rows.map((r) =>
-    `<tr><td class="mono"><strong>${esc(r.id)}</strong></td>` +
-    `<td>${esc(r.name || '')}<div class="muted tiny">${esc(r.description || '')}</div></td>` +
-    `<td>${sevBadge(r.severity)}</td>` +
-    `<td>${(r.mitre || []).map(mitreChip).join('') || '<span class="muted">—</span>'}</td>` +
-    `<td class="mono">${esc(r.source || '—')}</td></tr>`).join('');
-  $('rulesEmpty').hidden = rows.length > 0;
-  $('ruleCount').textContent = `${rows.length} of ${S.rules.length} rules loaded`;
-}
-LOADERS.rules = loadRules;
+/* Rules are browsable via the Intelligence view's "What We Can Detect" tab.
+   The standalone Rules view was removed in the simplified dashboard; its
+   leftover wiring crashed page boot (fixed 2026-11-10). */
 
 /* ---------------- WebSocket live feed ---------------- */
 function wsUrl() {
-  return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/feed';
+  return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/feed?key=' + encodeURIComponent(S.key || '');
 }
 function setConn(state, label) {
   const pill = $('connPill');
@@ -877,6 +866,13 @@ function stopPolling() {
   if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; }
 }
 
+let _lastOverviewLoad = 0;
+function maybeLoadOverview() {
+  const now = Date.now();
+  if (now - _lastOverviewLoad < 3000) return;
+  _lastOverviewLoad = now;
+  loadOverview();
+}
 function handleFrame(f) {
   if (!f || typeof f !== 'object') return;
   switch (f.type) {
@@ -884,6 +880,7 @@ function handleFrame(f) {
       break;
     case 'alert': {
       const a = normAlert(f.alert || {});
+      if (a.id && S.alerts.some((x) => x.id === a.id)) break;
       S.alerts.unshift(a);
       S.alerts = S.alerts.slice(0, 500);
       pushTicker(`${sevBadge(a.severity)} <span>${esc(a.title)}</span>`);
@@ -891,7 +888,7 @@ function handleFrame(f) {
       if (['critical', 'high'].includes(String(a.severity || '').toLowerCase()))
         addNotif('alert', a.title, `${a.severity} · ${a.rule_id || ''}`, a, true);
       if (S.view === 'alerts') renderAlerts();
-      if (S.view === 'overview') loadOverview();
+      if (S.view === 'overview') maybeLoadOverview();
       debouncedBadges();
       break;
     }
@@ -907,7 +904,7 @@ function handleFrame(f) {
     case 'ingest': {
       const acc = f.accepted || 0, na = f.new_alerts || 0;
       pushTicker(`<span class="chip">ingest</span> <span>${acc} event${acc === 1 ? '' : 's'} accepted${na ? ` · ${na} new alert${na === 1 ? '' : 's'}` : ''}</span>`);
-      if (S.view === 'overview') loadOverview();
+      if (S.view === 'overview') maybeLoadOverview();
       debouncedBadges();
       break;
     }
@@ -950,7 +947,6 @@ function wire() {
   $('alertSevFilter').addEventListener('change', renderAlerts);
   $('alertSearch').addEventListener('input', debounce(renderAlerts, 200));
   $('covSearch').addEventListener('input', debounce(renderCoverage, 200));
-  $('ruleSearch').addEventListener('input', debounce(renderRules, 200));
 
   document.querySelectorAll('#incTabs .tab').forEach((t) =>
     t.addEventListener('click', () => {
@@ -1016,8 +1012,6 @@ function paintSkeletons(view) {
     } else if (view === 'coverage') {
       $('attackHeatmap').innerHTML = '<div class="skeleton sk-panel"></div>';
       $('coverageBody').innerHTML = skRows(8);
-    } else if (view === 'rules') {
-      $('rulesBody').innerHTML = skRows(8);
     }
   } catch (e) { /* view not fully built yet; ignore */ }
 }
@@ -1108,7 +1102,7 @@ function fuzzyMatch(hay, q) {
 }
 function buildPaletteIndex() {
   const items = [];
-  const views = [['overview', 'Overview'], ['alerts', 'Alerts'], ['incidents', 'Cases'], ['agents', 'Devices'], ['coverage', 'Coverage'], ['rules', 'Rules']];
+  const views = [['overview', 'Overview'], ['alerts', 'Alerts'], ['incidents', 'Cases'], ['agents', 'Devices'], ['intel', 'Intelligence']];
   for (const [v, label] of views)
     items.push({ kind: 'view', label, sub: 'Go to view', hay: `${label} view ${v}`, run: () => showView(v) });
   for (const a of (S.alerts || []).slice(0, 200))
@@ -1116,9 +1110,9 @@ function buildPaletteIndex() {
   for (const i of (S.incidents || []).slice(0, 100))
     items.push({ kind: 'case', label: i.title || i.id, sub: String(i.status || ''), hay: `${i.title} ${i.status} ${i.id}`, run: () => openIncident(i.id) });
   for (const r of (S.rules || []).slice(0, 100))
-    items.push({ kind: 'rule', label: `${r.id} — ${r.name || ''}`, sub: String(r.severity || ''), hay: `${r.id} ${r.name}`, run: () => { showView('rules'); $('ruleSearch').value = r.id; renderRules(); } });
+    items.push({ kind: 'rule', label: `${r.id} — ${r.name || ''}`, sub: String(r.severity || ''), hay: `${r.id} ${r.name}`, run: () => showView('intel') });
   for (const g of (S.agents || []).slice(0, 100))
-    items.push({ kind: 'device', label: g.hostname || g.agent_id || 'device', sub: String(g.os || ''), hay: `${g.hostname} ${g.agent_id}`, run: () => showView('agents') });
+    items.push({ kind: 'device', label: g.hostname || g.id || 'device', sub: String(g.os || ''), hay: `${g.hostname} ${g.id}`, run: () => showView('agents') });
   return items;
 }
 function openPalette() {
@@ -1227,7 +1221,7 @@ const TI_BASE = '/api/ti/v1';
 
 async function tiApi(path, opts = {}) {
   /* The TI platform runs on the same server via the combined app,
-     or at SENTINEL_TI_URL.  We try the same origin first. */
+     or at ARGUS_TI_URL.  We try the same origin first. */
   const headers = Object.assign({ 'X-API-Key': S.key }, opts.headers || {});
   if (opts.body !== undefined && !headers['Content-Type'])
     headers['Content-Type'] = 'application/json';
@@ -1256,15 +1250,29 @@ async function loadHoneypotView() {
       });
   } catch (e) { /* ignore */ }
 
+  // Real session records: the honeypot ships one structured summary event
+  // per closed session (program "cowrie"). Alerts alone cannot show this.
+  let realSessions = [];
+  try {
+    const evData = await api('/api/v1/events?source=syslog&limit=400');
+    realSessions = (evData.events || [])
+      .filter((e) => e.event && e.event.honeypot && e.event.program === 'cowrie')
+      .map((e) => ({ ts: e.ts, agent_id: e.agent_id, ...e.event }));
+  } catch (e) { /* fall back to alert-derived rows below */ }
+
   // Stats
   const sessions = hpAlerts.filter((a) => a.rule_id === 'ARG-1029');
   const cmdAlerts = hpAlerts.filter((a) => ['ARG-1030', 'ARG-1031', 'ARG-1032', 'ARG-1033'].includes(a.rule_id));
-  const uniqueIPs = [...new Set(hpAlerts.map((a) => a.entities?.src_ip).filter(Boolean))];
+  const uniqueIPs = [...new Set([
+    ...hpAlerts.map((a) => a.entities?.src_ip),
+    ...realSessions.map((x) => x.src_ip),
+  ].filter(Boolean))];
+  const realCmds = realSessions.reduce((n, x) => n + (x.command_count || 0), 0);
 
   const stats = [
-    { label: 'Attacker sessions', value: sessions.length, color: '#7c3aed' },
+    { label: 'Attacker sessions', value: realSessions.length || sessions.length, color: '#7c3aed' },
     { label: 'Unique attacker IPs', value: uniqueIPs.length, color: '#dc2626' },
-    { label: 'Post-auth commands', value: cmdAlerts.length, color: '#ea580c' },
+    { label: 'Post-auth commands', value: realCmds || cmdAlerts.length, color: '#ea580c' },
     { label: 'Honeypot alerts', value: hpAlerts.length, color: '#d97706' },
   ];
   const grid = $('hpStatGrid');
@@ -1277,24 +1285,45 @@ async function loadHoneypotView() {
     ).join('');
   }
 
-  // Sessions table
+  // Sessions table — real records when available, alert-derived fallback.
   const tbody = $('hpSessionsBody');
   const empty = $('hpSessionsEmpty');
   if (tbody) {
-    tbody.innerHTML = sessions.slice(0, 50).map((a) => {
-      const ent = a.entities || {};
-      return `<tr>
-        <td class="mono small">${shortClock(a.ts)}</td>
-        <td class="mono">${esc(ent.src_ip || '—')}</td>
-        <td>${esc(a.agent_id || '—')}</td>
-        <td><span class="chip">SSH</span></td>
-        <td><span class="sev sev-critical">yes</span></td>
-        <td>—</td>
-        <td>—</td>
-        <td><span class="chip">auth</span></td>
-      </tr>`;
-    }).join('');
-    if (empty) empty.hidden = sessions.length > 0;
+    if (realSessions.length) {
+      tbody.innerHTML = realSessions.slice(0, 50).map((x) => {
+        const gotIn = x.success_user
+          ? `<span class="sev sev-critical">yes</span> <span class="mono small">${esc(x.success_user)}</span>`
+          : '<span class="muted">no</span>';
+        const cmds = (x.commands || []).join('\n');
+        const cats = (x.categories || []).slice(0, 3)
+          .map((c) => `<span class="chip">${esc(c)}</span>`).join(' ') || '<span class="muted">—</span>';
+        return `<tr>
+          <td class="mono small" title="duration ${esc(x.duration_s ?? '—')}s">${shortClock(x.ts)}</td>
+          <td class="mono">${esc(x.src_ip || '—')}</td>
+          <td>${esc(x.agent_id || '—')}</td>
+          <td><span class="chip">${esc(String(x.protocol || 'ssh').toUpperCase())}</span></td>
+          <td>${gotIn}</td>
+          <td class="mono" title="${esc(cmds)}">${x.command_count || 0}</td>
+          <td class="mono">${x.downloads || 0}</td>
+          <td>${cats}</td>
+        </tr>`;
+      }).join('');
+    } else {
+      tbody.innerHTML = sessions.slice(0, 50).map((a) => {
+        const ent = a.entities || {};
+        return `<tr>
+          <td class="mono small">${shortClock(a.ts)}</td>
+          <td class="mono">${esc(ent.src_ip || '—')}</td>
+          <td>${esc(a.agent_id || '—')}</td>
+          <td><span class="chip">SSH</span></td>
+          <td><span class="sev sev-critical">yes</span></td>
+          <td>—</td>
+          <td>—</td>
+          <td><span class="chip">auth</span></td>
+        </tr>`;
+      }).join('');
+    }
+    if (empty) empty.hidden = (realSessions.length || sessions.length) > 0;
   }
 
   // Top attacker IPs
@@ -1339,15 +1368,17 @@ async function loadHoneypotView() {
   const hpAtbody = $('hpAlertsBody');
   const hpAtEmpty = $('hpAlertsEmpty');
   if (hpAtbody) {
-    hpAtbody.innerHTML = hpAlerts.slice(0, 40).map((a) =>
+    hpAtbody.innerHTML = hpAlerts.slice(0, 40).map((a, idx) =>
       `<tr>
         <td>${sevBadge(a.severity)}</td>
         <td class="mono small">${shortClock(a.ts)}</td>
         <td>${esc(a.title || a.rule_name || '')}</td>
         <td class="mono small">${esc(a.agent_id || '')}</td>
-        <td><button class="link-btn" onclick="openAlertDrawer(${JSON.stringify(a).replace(/"/g, '&quot;')})">Details</button></td>
+        <td><button class="link-btn" data-hp-idx="${idx}">Details</button></td>
       </tr>`
     ).join('');
+    hpAtbody.querySelectorAll('button[data-hp-idx]').forEach((b) =>
+      b.addEventListener('click', () => openAlertDrawer(hpAlerts[Number(b.dataset.hpIdx)])));
     if (hpAtEmpty) hpAtEmpty.hidden = hpAlerts.length > 0;
   }
 }
@@ -1547,6 +1578,22 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   const repFilter = $('tiRepFilter');
   if (repFilter) repFilter.addEventListener('change', renderTiIocs);
+  const tiExport = $('tiExportCsv');
+  if (tiExport) tiExport.addEventListener('click', async () => {
+    try {
+      const resp = await fetch('/api/ti/v1/export/csv', { headers: { 'X-API-Key': S.key } });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'argus-iocs.csv';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) { toast('Export failed', String(e.message || e), 'error'); }
+  });
 });
 
 /* Hook the new views into the existing showView machinery by patching S */
@@ -1554,7 +1601,10 @@ const _origShowView = typeof showView === 'function' ? showView : null;
 
 /* Patch the view loader by extending the existing refresh dispatcher */
 /* ---- Unified Intelligence view: tab switching ---- */
+let _intelTabsWired = false;
 function initIntelTabs() {
+  if (_intelTabsWired) return;
+  _intelTabsWired = true;
   document.querySelectorAll('#intelTabs .tab').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#intelTabs .tab').forEach((b) => b.classList.remove('active'));
@@ -1578,25 +1628,6 @@ async function loadIntelView() {
 
 LOADERS.intel = loadIntelView;
 
-/* Override nav for intel button */
-document.querySelectorAll('.nav-btn[data-view="intel"]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    if (typeof showView === 'function') showView('intel');
-  });
-});
-
-/* Also integrate into the existing polling refresh loop. */
-const _origRefresh = typeof refreshCurrentView === 'function' ? refreshCurrentView : null;
-function sentinelRefresh() {
-  if (_origRefresh) _origRefresh();
-  if (S.view === 'intel') {
-    const activeTab = document.querySelector('#intelTabs .tab.active');
-    const tab = activeTab ? activeTab.dataset.itab : 'honeypot';
-    if (tab === 'honeypot') loadHoneypotView();
-    else if (tab === 'threatintel') loadThreatIntelView();
-    else if (tab === 'coverage') loadCoverage();
-  }
-}
 
 /* CSS helpers for new elements */
 const _style = document.createElement('style');

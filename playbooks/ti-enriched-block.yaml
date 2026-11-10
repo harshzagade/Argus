@@ -1,8 +1,9 @@
 name: ti-enriched-block
 description: >
-  When any alert fires where the enrichment has confirmed a malicious IP
-  (via Sentinel TI or external feeds), auto-block it at the host level
-  and open a high-priority SOC notification.
+  Notification for critical alerts. The block step only runs when this
+  playbook is bound to a specific rule (on_rule or the rule's playbook:
+  field); on the severity-wide trigger it is notify-only, because severity
+  alone does not prove the source IP is malicious.
 on_severity: critical
 steps:
   - action: notify

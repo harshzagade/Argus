@@ -1,5 +1,7 @@
 """Argus server: ingest -> detect -> enrich -> triage -> correlate -> respond."""
 import asyncio
+import hmac
+import sys
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -21,6 +23,25 @@ from .triage import triage
 BASE = Path(__file__).resolve().parent.parent
 API_KEY = os.environ.get("ARGUS_API_KEY", "argus-dev-key")
 AGENT_KEY = os.environ.get("ARGUS_AGENT_KEY", API_KEY)
+ALLOW_RUN = os.environ.get("ARGUS_ALLOW_RUN", "") == "1"
+
+# Optional per-agent keys: ARGUS_AGENT_KEYS="agent-01:key1,agent-02:key2".
+# When an agent has its own key, only that key may poll/ack its actions.
+AGENT_KEYS = {}
+for _pair in os.environ.get("ARGUS_AGENT_KEYS", "").split(","):
+    if ":" in _pair:
+        _aid, _k = _pair.split(":", 1)
+        if _aid.strip() and _k.strip():
+            AGENT_KEYS[_aid.strip()] = _k.strip()
+
+if API_KEY == "argus-dev-key":
+    print("=" * 70, file=sys.stderr)
+    print("WARNING: Argus is using the DEFAULT API key (argus-dev-key).", file=sys.stderr)
+    print("Anyone who can reach this server can control it. Set ARGUS_API_KEY", file=sys.stderr)
+    print("to a long random value before exposing this beyond localhost.", file=sys.stderr)
+    print("=" * 70, file=sys.stderr)
+if AGENT_KEY == API_KEY:
+    print("WARNING: ARGUS_AGENT_KEY is not set separately; agents share the API key.", file=sys.stderr)
 DB_PATH = os.environ.get("ARGUS_DB", str(BASE / "argus.db"))
 RULES_DIR = os.environ.get("ARGUS_RULES_DIR", str(BASE / "rules"))
 PLAYBOOKS_DIR = os.environ.get("ARGUS_PLAYBOOKS_DIR", str(BASE / "playbooks"))
@@ -37,7 +58,7 @@ notifications: list = []
 
 async def broadcast(frame: dict):
     dead = set()
-    for ws in subscribers:
+    for ws in list(subscribers):
         try:
             await ws.send_json(frame)
         except Exception:
@@ -56,13 +77,19 @@ def notify(frame: dict):
         pass
 
 
+def _key_ok(given: str | None, expected: str) -> bool:
+    return bool(given) and hmac.compare_digest(given, expected)
+
+
 def check_api_key(x_api_key: str | None):
-    if x_api_key != API_KEY:
+    if not _key_ok(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="invalid API key")
 
 
-def check_agent_key(x_agent_key: str | None):
-    if x_agent_key != AGENT_KEY:
+def check_agent_key(x_agent_key: str | None, agent_id: str | None = None):
+    # Per-agent key wins when configured for this agent; otherwise shared key.
+    expected = AGENT_KEYS.get(agent_id or "", AGENT_KEY)
+    if not _key_ok(x_agent_key, expected):
         raise HTTPException(status_code=401, detail="invalid agent key")
 
 
@@ -105,7 +132,8 @@ def process_alert(alert: dict, event_ids: list):
     alert["id"] = aid
     iid = correlate(db, alert)
     update_risk(alert.get("agent_id"))
-    for pb in playbooks_for(alert, playbooks):
+    rule = next((r for r in engine.rules if r["id"] == alert.get("rule_id")), None)
+    for pb in playbooks_for(alert, playbooks, rule):
         run_playbook(db, notify, pb, alert)
     return aid, iid
 
@@ -224,20 +252,23 @@ class ActionBody(BaseModel):
 def enqueue(agent_id: str, body: ActionBody,
             x_api_key: str | None = Header(default=None)):
     check_api_key(x_api_key)
+    if body.action == "run" and not ALLOW_RUN:
+        raise HTTPException(status_code=403,
+                            detail="run action disabled; set ARGUS_ALLOW_RUN=1 on the server to allow it")
     aid = db.enqueue_action(agent_id, body.action, body.params)
     return {"action_id": aid}
 
 
 @app.get("/api/v1/agents/{agent_id}/actions")
 def poll_actions(agent_id: str, x_agent_key: str | None = Header(default=None)):
-    check_agent_key(x_agent_key)
+    check_agent_key(x_agent_key, agent_id)
     return {"actions": db.pending_actions(agent_id)}
 
 
 @app.post("/api/v1/agents/{agent_id}/actions/{action_id}/ack")
 def ack_action(agent_id: str, action_id: str, body: dict,
                x_agent_key: str | None = Header(default=None)):
-    check_agent_key(x_agent_key)
+    check_agent_key(x_agent_key, agent_id)
     db.ack_action(action_id, body.get("status", "done"), body.get("output", ""))
     return {"ok": True}
 
@@ -287,6 +318,14 @@ def reload_rules(x_api_key: str | None = Header(default=None)):
     return {"rules": n, "playbooks": len(playbooks)}
 
 
+@app.get("/api/v1/events")
+def list_events(agent_id: str | None = None, source: str | None = None,
+                limit: int = 200, x_api_key: str | None = Header(default=None)):
+    check_api_key(x_api_key)
+    return {"events": db.list_events(agent_id=agent_id, source=source,
+                                     limit=min(int(limit), 1000))}
+
+
 @app.get("/api/v1/notifications")
 def get_notifications(x_api_key: str | None = Header(default=None)):
     check_api_key(x_api_key)
@@ -295,6 +334,11 @@ def get_notifications(x_api_key: str | None = Header(default=None)):
 
 @app.websocket("/ws/feed")
 async def feed(ws: WebSocket):
+    # Browsers cannot set headers on WebSocket connections, so the key
+    # arrives as a query parameter; reject unauthenticated listeners.
+    if not _key_ok(ws.query_params.get("key"), API_KEY):
+        await ws.close(code=4401)
+        return
     await ws.accept()
     subscribers.add(ws)
     try:

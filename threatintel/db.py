@@ -2,7 +2,7 @@
 
 Stores IOCs (Indicators of Compromise), threat events, and feed sources.
 Modeled after MISP (github.com/MISP/MISP, ~5k stars) but lightweight and
-embeddable into the Sentinel ecosystem.
+embeddable into the Argus ecosystem.
 
 Tables:
     iocs        — individual indicators (IP, domain, hash, URL, email)
@@ -11,6 +11,7 @@ Tables:
     feeds       — configured threat feed sources
     feed_runs   — feed ingestion history
 """
+import urllib.parse
 import json
 import sqlite3
 import threading
@@ -180,7 +181,29 @@ class ThreatIntelDB:
             "SELECT * FROM iocs WHERE value=? AND active=1 ORDER BY score DESC LIMIT 1",
             (value,)
         )
-        return self._row(rows[0]) if rows else None
+        if rows:
+            return self._row(rows[0])
+        # Domain <-> URL cross-match: a known-bad URL indicts its host domain
+        # (an analyst pasting the bare domain must not get a false CLEAN),
+        # and a known-bad domain indicts URLs hosted on it.
+        host = None
+        if "://" in value:
+            host = urllib.parse.urlparse(value).hostname
+        elif "." in value and "/" not in value and " " not in value:
+            host = value
+        if host:
+            if host != value:
+                rows = self._query(
+                    "SELECT * FROM iocs WHERE value=? AND active=1 ORDER BY score DESC LIMIT 1",
+                    (host,)
+                )
+                if rows:
+                    return self._row(rows[0])
+            for r in self._query(
+                    "SELECT * FROM iocs WHERE type='url' AND active=1 ORDER BY score DESC", ()):
+                if urllib.parse.urlparse(r["value"]).hostname == host:
+                    return self._row(r)
+        return None
 
     def bulk_lookup(self, values: list[str]) -> dict[str, dict]:
         """Look up multiple values. Returns {value: ioc_dict}."""
@@ -199,6 +222,12 @@ class ThreatIntelDB:
             # Keep highest score for duplicates
             if v not in result or d["score"] > result[v]["score"]:
                 result[v] = d
+        # Cross-match fallback for values with no exact hit (domain vs URL).
+        for v in values:
+            if v not in result:
+                hit = self.lookup(v)
+                if hit:
+                    result[v] = hit
         return result
 
     def list_iocs(self, ioc_type: str = None, reputation: str = None,
@@ -456,5 +485,9 @@ class ThreatIntelDB:
                 "ioc_type": "cidr",
             },
         ]
+        existing = {row["name"] for row in self._query("SELECT name FROM feeds", ())}
         for f in default_feeds:
-            self.upsert_feed(f["name"], f["url"], fmt=f["format"], ioc_type=f["ioc_type"])
+            # Seed only missing feeds: re-seeding an existing feed would
+            # silently re-enable one the operator disabled.
+            if f["name"] not in existing:
+                self.upsert_feed(f["name"], f["url"], fmt=f["format"], ioc_type=f["ioc_type"])

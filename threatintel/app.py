@@ -1,7 +1,7 @@
-"""Sentinel Threat Intelligence Platform — FastAPI application.
+"""Argus Threat Intelligence Platform — FastAPI application.
 
 Exposes a REST API inspired by MISP's data model but much simpler and
-purpose-built to integrate with the Sentinel/Argus SIEM ecosystem.
+purpose-built to integrate with the Argus SIEM ecosystem.
 
 Endpoints:
     GET  /api/ti/v1/health
@@ -24,10 +24,12 @@ Endpoints:
     GET  /api/ti/v1/export/csv     export all active IOCs as CSV
     GET  /api/ti/v1/export/stix    export as STIX 2.1 bundle
 """
+import hmac
 import csv
 import io
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,17 +42,18 @@ from .feeds import FeedScheduler, classify_value
 
 BASE = Path(__file__).resolve().parent.parent
 TI_API_KEY = os.environ.get("SENTINEL_API_KEY", os.environ.get("ARGUS_API_KEY", "argus-dev-key"))
-TI_DB_PATH = os.environ.get("SENTINEL_TI_DB", str(BASE / "sentinel-ti.db"))
-TI_FEED_INTERVAL = float(os.environ.get("SENTINEL_TI_FEED_INTERVAL", "3600"))
+TI_DB_PATH = (os.environ.get("ARGUS_TI_DB") or os.environ.get("SENTINEL_TI_DB")
+              or str(BASE / "argus-ti.db"))
+TI_FEED_INTERVAL = float(os.environ.get("ARGUS_TI_FEED_INTERVAL") or os.environ.get("SENTINEL_TI_FEED_INTERVAL", "3600"))
 
 ti_db = ThreatIntelDB(TI_DB_PATH)
 scheduler = FeedScheduler(ti_db, default_interval=TI_FEED_INTERVAL)
 
-app = FastAPI(title="Sentinel Threat Intelligence Platform", version="1.0.0")
+app = FastAPI(title="Argus Threat Intelligence Platform", version="1.0.0")
 
 
 def check_key(x_api_key: str | None):
-    if x_api_key != TI_API_KEY:
+    if not (x_api_key and hmac.compare_digest(x_api_key, TI_API_KEY)):
         raise HTTPException(401, "invalid API key")
 
 
@@ -380,7 +383,7 @@ def export_stix(reputation: str = None,
         obj = {
             "type": "indicator",
             "spec_version": "2.1",
-            "id": f"indicator--{iid}",
+            "id": "indicator--" + str(uuid.uuid5(uuid.NAMESPACE_URL, f"argus-ioc:{ioc_type}:{value}")),
             "created": ioc.get("first_seen", _now()),
             "modified": ioc.get("last_seen", _now()),
             "name": f"{ioc_type}:{value}",
@@ -403,7 +406,7 @@ def export_stix(reputation: str = None,
 
 
 # ---------------------------------------------------------------------------
-# Sentinel enrichment bridge (called by Argus server/enrich.py)
+# Argus enrichment bridge (called by server/enrich.py)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/ti/v1/enrich")

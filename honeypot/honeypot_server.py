@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Sentinel Honeypot runner — starts SSH + HTTP honeypots in threads.
+"""Argus Honeypot runner — starts SSH + HTTP honeypots in threads.
 
 Usage:
     python honeypot_server.py
     python honeypot_server.py --ssh-port 2222 --http-port 8080
 
 Config via environment:
-    SENTINEL_SERVER         Argus server base URL (default http://localhost:8000)
-    SENTINEL_API_KEY        API key (default argus-dev-key)
-    SENTINEL_HONEYPOT_ID    Agent ID reported to Sentinel (default honeypot-01)
+    ARGUS_SERVER            Argus server base URL (default http://localhost:8000)
+    ARGUS_API_KEY           API key (default argus-dev-key)
+    ARGUS_HONEYPOT_ID       Agent ID reported to Argus (default honeypot-01)
     HONEYPOT_SSH_PORT       SSH listen port (default 2222)
     HONEYPOT_HTTP_PORT      HTTP listen port (default 8080)
     HONEYPOT_HOST           Bind address (default 0.0.0.0)
@@ -38,10 +38,10 @@ def _env(k, default):
 
 
 def parse_args(argv=None):
-    p = argparse.ArgumentParser(description="Sentinel honeypot runner")
-    p.add_argument("--server", default=_env("SENTINEL_SERVER", "http://localhost:8000"))
-    p.add_argument("--api-key", default=_env("SENTINEL_API_KEY", "argus-dev-key"))
-    p.add_argument("--honeypot-id", default=_env("SENTINEL_HONEYPOT_ID", "honeypot-01"))
+    p = argparse.ArgumentParser(description="Argus honeypot runner")
+    p.add_argument("--server", default=_env("ARGUS_SERVER", _env("SENTINEL_SERVER", "http://localhost:8000")))
+    p.add_argument("--api-key", default=_env("ARGUS_API_KEY", _env("SENTINEL_API_KEY", "argus-dev-key")))
+    p.add_argument("--honeypot-id", default=_env("ARGUS_HONEYPOT_ID", _env("SENTINEL_HONEYPOT_ID", "honeypot-01")))
     p.add_argument("--ssh-port", type=int, default=int(_env("HONEYPOT_SSH_PORT", "2222")))
     p.add_argument("--http-port", type=int, default=int(_env("HONEYPOT_HTTP_PORT", "8080")))
     p.add_argument("--host", default=_env("HONEYPOT_HOST", "0.0.0.0"))
@@ -98,7 +98,7 @@ def main(argv=None):
         threads.append(t)
         log.info("SSH honeypot started on %s:%d", args.host, args.ssh_port)
 
-    log.info("Sentinel honeypot running. Press Ctrl+C to stop.")
+    log.info("Argus honeypot running. Press Ctrl+C to stop.")
 
     def _stop(sig, frame):
         log.info("shutdown signal received")

@@ -11,7 +11,7 @@
   match:
     all:
       - {field: "event.program", equals: "auditd"}
-      - {field: "event.message", regex: '(stop|halt|disabled|terminat|exit)'}
+      - {field: "event.message", regex: '(stopp|halt|disabled|terminat|exiting)'}
   entities: ["event.message"]
   title: "Audit daemon stopped on {agent_id}"
   playbook: snapshot-evidence

@@ -13,6 +13,7 @@
       - {field: "event.service", equals: "sshd"}
       - {field: "event.result", equals: "success"}
   group_by: ["agent_id", "event.src_ip"]
+  requires: {rule_id: ARG-1001, count: 5, within: 1800}
   cooldown: 3600
   entities: ["event.src_ip", "event.user"]
   title: "Successful SSH login for {event.user} from {event.src_ip} on {agent_id} (possible post-brute-force compromise)"

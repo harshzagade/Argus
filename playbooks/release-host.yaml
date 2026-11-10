@@ -1,0 +1,12 @@
+name: release-host
+description: >
+  Undo an isolate-host containment: remove the isolation firewall rules
+  from the agent and notify the SOC channel. Manual only - it has no
+  automatic trigger; bind it to a rule or run it deliberately.
+steps:
+  - action: release
+    params: {}
+    target: agent
+  - action: notify
+    params: {channel: "soc", message: "Host {agent_id} released from isolation: {alert.title}"}
+    target: server

@@ -10,7 +10,7 @@
   source: syslog
   match:
     any:
-      - {field: "event.message", regex: '(rm\s+(-f\s+)?|shred\s+|truncate\s+.*-s\s*0\s+|>\s*|cat\s+/dev/null\s*>\s*)/var/log'}
+      - {field: "event.message", regex: '(rm\s+(-\S+\s+)*|shred\s+|truncate\s+.*-s\s*0\s+|>\s*|cat\s+/dev/null\s*>\s*)/var/log'}
       - {field: "event.message", regex: 'history\s+-c'}
   entities: ["event.message"]
   title: "Log clearing activity detected on {agent_id}"

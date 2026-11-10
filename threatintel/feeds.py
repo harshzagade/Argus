@@ -123,13 +123,24 @@ def parse_json_feed(content: str, forced_type: str = None) -> list[dict]:
         return []
 
     iocs = []
-    items = data if isinstance(data, list) else data.get("data", data.get("indicators", []))
+    if isinstance(data, list):
+        items = data
+        warning_name = None
+    else:
+        items = data.get("data", data.get("indicators", data.get("list", [])))
+        # MISP warninglist shape: {"name": ..., "list": [...]} — these are
+        # known-legitimate ranges, NOT malicious indicators.
+        warning_name = data.get("name") if "list" in data else None
 
     for item in items:
         if isinstance(item, str):
             ioc_type = forced_type or classify_value(item)
             if ioc_type:
-                iocs.append({"type": ioc_type, "value": item})
+                entry = {"type": ioc_type, "value": item}
+                if warning_name is not None:
+                    entry["score"] = 0
+                    entry["context"] = {"warninglist": warning_name}
+                iocs.append(entry)
         elif isinstance(item, dict):
             value = (item.get("indicator") or item.get("value") or
                      item.get("ip") or item.get("domain") or item.get("url") or
@@ -304,6 +315,8 @@ class FeedRunner:
                 return parser(content, forced_type)
             elif fmt == "csv":
                 return parser(content, forced_type=forced_type)
+            elif fmt == "json":
+                return parser(content, forced_type)
             else:
                 return parser(content)
         except Exception as e:

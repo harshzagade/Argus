@@ -1,1 +1,1 @@
-# Sentinel Honeypot — SSH + HTTP deception layer
+# Argus Honeypot — SSH + HTTP deception layer

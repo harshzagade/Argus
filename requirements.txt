@@ -1,8 +1,8 @@
-# Sentinel — Unified Security Platform
+# Argus — Unified Security Platform
 # Install everything needed to run all three components together:
 #   - Argus SIEM/XDR server
-#   - Sentinel Threat Intelligence Platform
-#   - Sentinel Honeypot (SSH + HTTP)
+#   - Argus Threat Intelligence Platform
+#   - Argus Honeypot (SSH + HTTP)
 
 # Core server + TI Platform
 fastapi>=0.115

@@ -43,12 +43,8 @@ MITRE_INFO = {
     "T1486": ("Data Encrypted for Impact", "Mass encryption is the ransomware endgame.",
               ["Isolate affected hosts NOW", "Activate the ransomware playbook",
                "Do NOT pay before engaging IR leadership"]),
-    # Honeypot & deception-specific
-    "T1110.001": ("Password Guessing against Honeypot", "Attacker confirmed by honeypot credential acceptance — zero false-positive.",
-              ["Block source IP fleet-wide immediately", "Review all other activity from this IP in the last 24h",
-               "Submit IP to Sentinel TI Platform as confirmed malicious"]),
     "T1105": ("Honeypot Payload Drop", "Attacker dropped a payload — capture URL as live IOC.",
-              ["Add download URL to Sentinel TI Platform", "Analyse the payload in a sandbox",
+              ["Add download URL to Argus TI Platform", "Analyse the payload in a sandbox",
                "Block the C2 domain/IP at the perimeter"]),
 }
 

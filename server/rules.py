@@ -143,25 +143,44 @@ class RuleEngine:
                 continue
             if not matched:
                 continue
+            key = (rule["id"], self._group_key(rule, event))
+            dq = self._hits[key]
+            dq.append(now)
+            while dq and (now - dq[0]) > timedelta(seconds=3600):
+                dq.popleft()
+            # Cross-rule requirement: e.g. ARG-1002 (successful login) only
+            # fires when the same group recently produced enough ARG-1001
+            # brute-force hits. A normal admin login stays silent.
+            req = rule.get("requires")
+            if req:
+                rkey = (req.get("rule_id"), key[1])
+                within = timedelta(seconds=req.get("within", 1800))
+                recent = sum(1 for t in self._hits.get(rkey, ()) if (now - t) <= within)
+                if recent < req.get("count", 1):
+                    continue
             threshold = rule.get("threshold")
             if threshold:
-                key = (rule["id"], self._group_key(rule, event))
                 window = timedelta(seconds=threshold.get("window", 300))
-                dq = self._hits[key]
-                dq.append(now)
-                while dq and (now - dq[0]) > window:
-                    dq.popleft()
-                if len(dq) < threshold.get("count", 5):
+                event_count = sum(1 for t in dq if (now - t) <= window)
+                if event_count < threshold.get("count", 5):
                     continue
-                cooldown = rule.get("cooldown", 0)
+            else:
+                event_count = 1
+            # Cooldown applies to every rule, not just threshold rules.
+            cooldown = rule.get("cooldown", 0)
+            if cooldown:
                 last = self._last_fire.get(key)
                 if last and (now - last) < timedelta(seconds=cooldown):
                     continue
                 self._last_fire[key] = now
-                event_count = len(dq)
-            else:
-                event_count = 1
             alerts.append(self._build_alert(rule, event, event_count))
+        # Bound memory: drop stale groups when the state map grows too large
+        # (group keys can be attacker-controlled, e.g. source IPs).
+        if len(self._hits) > 5000:
+            stale = [k for k, v in self._hits.items()
+                     if not v or (now - v[-1]) > timedelta(seconds=3600)]
+            for k in stale:
+                del self._hits[k]
         return alerts
 
     def _build_alert(self, rule, event, event_count):

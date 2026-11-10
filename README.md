@@ -1,6 +1,6 @@
-# Sentinel — Unified Open-Source Cybersecurity Ecosystem
+# Argus — Unified Open-Source Cybersecurity Platform
 
-Sentinel is a full-stack, open-source cybersecurity platform built by combining three high-impact GitHub projects into one unified ecosystem:
+Argus is a full-stack, open-source cybersecurity platform built by combining three high-impact GitHub projects into one unified ecosystem:
 
 | Component | Inspired by | Stars | What it does |
 |---|---|---|---|
@@ -8,12 +8,12 @@ Sentinel is a full-stack, open-source cybersecurity platform built by combining 
 | **Honeypot** | [Cowrie](https://github.com/cowrie/cowrie) | ~6k ⭐ | SSH + HTTP deception sensors, attacker session capture |
 | **Threat Intel** | [MISP](https://github.com/MISP/MISP) | ~5k ⭐ | IOC database, feed ingestion, STIX export, enrichment API |
 
-Everything runs on a **single port (8000)** — one dashboard, one API key, one Docker command.
+The SIEM and threat-intel platform run on a **single port (8000)** — one dashboard, one API key, one Docker command. The honeypot sensors listen separately on 2222 (SSH) and 8080 (HTTP).
 
 ```
-sentinel/
+argus/
 ├── server/          Argus SIEM/XDR — FastAPI, rule engine, SOAR, WebSocket
-│   └── sentinel_app.py   ← unified entry point (mounts SIEM + TI)
+│   └── argus_app.py   ← unified entry point (mounts SIEM + TI)
 ├── honeypot/        Cowrie-inspired SSH/HTTP deception sensors
 │   ├── ssh_pot.py       medium-interaction SSH honeypot (paramiko)
 │   └── honeypot_server.py
@@ -29,7 +29,7 @@ sentinel/
 │   └── ti-enriched-block.yaml            ← new
 ├── dashboard/       Real-time SOC dashboard (vanilla JS, no framework)
 │   ├── index.html       + Honeypot + Threat Intel views
-│   └── app.js           + all Sentinel-specific JS
+│   └── app.js           + all Argus-specific JS
 ├── simulator/       Attack scenario replay (+ honeypot + TI scenarios)
 └── docker-compose.yml   sentinel + honeypot + simulator services
 ```
@@ -40,7 +40,7 @@ sentinel/
 
 ```
                     ┌─────────────────────────────────────────┐
-                    │         Sentinel Dashboard (port 8000)   │
+                    │         Argus Dashboard (port 8000)   │
                     │  Overview · Alerts · Cases · Devices     │
                     │  Coverage · Rules · Honeypots · ThreatIntel│
                     └──────────────┬──────────────────────────┘
@@ -48,7 +48,7 @@ sentinel/
               ┌────────────────────┼──────────────────┐
               │                    │                  │
     ┌─────────▼──────┐  ┌──────────▼────────┐  ┌─────▼──────────────────┐
-    │  Argus SIEM/XDR│  │  Threat Intel      │  │  Sentinel Honeypot     │
+    │  Argus SIEM/XDR│  │  Threat Intel      │  │  Argus Honeypot     │
     │  /api/v1/*     │  │  /api/ti/v1/*      │  │  port 2222 (SSH)       │
     │                │  │                    │  │  port 8080 (HTTP)      │
     │  Rule engine   │  │  IOC database      │  │                        │
@@ -58,13 +58,13 @@ sentinel/
     │  Playbooks     │  │  (5 default feeds) │  │  ships events to SIEM  │
     └────────┬───────┘  └────────────────────┘  └────────────────────────┘
              │ enrich()
-             └──► Sentinel TI first, then AbuseIPDB/VT/GreyNoise/mock
+             └──► Argus TI first, then AbuseIPDB/VT/GreyNoise/mock
 ```
 
 **Data flow:**
 1. Argus agents (Linux) + Honeypot sensors ship events → `POST /api/v1/events`
 2. Rule engine + UEBA baselines fire alerts
-3. Enrichment queries **Sentinel TI first** (local IOC DB), then external APIs
+3. Enrichment queries **Argus TI first** (local IOC DB), then external APIs
 4. AI triage (Claude / GPT / heuristic) explains each alert
 5. Correlation groups alerts → incidents
 6. Playbooks auto-respond (block IP, quarantine, isolate, notify, webhook)
@@ -79,7 +79,7 @@ sentinel/
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-# 2. Start the Sentinel server (SIEM + TI on port 8000)
+# 2. Start the Argus server (SIEM + TI on port 8000)
 .venv/bin/uvicorn server.sentinel_app:app --port 8000
 
 # 3. (Optional) Start the honeypot in another terminal
@@ -101,11 +101,11 @@ API key: `argus-dev-key` (enter once in the dashboard settings modal).
 ## Quickstart (Docker — all three components)
 
 ```bash
-# Full stack: Sentinel + Honeypot
+# Full stack: Argus + Honeypot
 docker compose up --build -d
 
 # Ports:
-#   8000 → Sentinel dashboard + REST API
+#   8000 → Argus dashboard + REST API
 #   2222 → SSH honeypot (try: ssh root@localhost -p 2222)
 #   8080 → HTTP honeypot (try: curl http://localhost:8080/wp-login.php)
 
@@ -115,7 +115,7 @@ docker compose --profile demo up simulator
 
 ---
 
-## Sentinel Threat Intel Platform
+## Argus Threat Intel Platform
 
 The TI platform is a lightweight MISP-inspired IOC management system.
 
@@ -151,7 +151,7 @@ curl -H "X-API-Key: argus-dev-key" \
 
 ---
 
-## Sentinel Honeypot
+## Argus Honeypot
 
 The honeypot is a medium-interaction deception sensor inspired by Cowrie.
 
@@ -196,7 +196,7 @@ The honeypot is a medium-interaction deception sensor inspired by Cowrie.
 ### Argus SIEM/XDR (`/api/v1/*`)
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full contract.
 
-### Sentinel TI (`/api/ti/v1/*`)
+### Argus TI (`/api/ti/v1/*`)
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/ti/v1/health` | Health check |
@@ -220,10 +220,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full contract.
 | GET | `/api/ti/v1/export/stix` | Export IOCs as STIX 2.1 |
 | POST | `/api/ti/v1/enrich` | Enrichment bridge for Argus |
 
-### Sentinel health (`/api/sentinel/*`)
+### Argus health (`/api/sentinel/*`)
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/sentinel/health` | All-component health check |
+| GET | `/api/argus/health` | All-component health check |
 
 ---
 
@@ -280,10 +280,10 @@ ARG-9004  Authentication failure burst       high      (UEBA)
 |---|---|---|
 | `ARGUS_API_KEY` | `argus-dev-key` | Shared API key for SIEM |
 | `ARGUS_DB` | `./argus.db` | SIEM SQLite database |
-| `SENTINEL_API_KEY` | same as ARGUS_API_KEY | TI platform API key |
-| `SENTINEL_TI_DB` | `./sentinel-ti.db` | TI SQLite database |
-| `SENTINEL_TI_URL` | _(empty)_ | If set, enrichment queries this TI URL first |
-| `SENTINEL_TI_FEED_INTERVAL` | `3600` | Seconds between feed refreshes |
+| `ARGUS_API_KEY` | same as ARGUS_API_KEY | TI platform API key |
+| `ARGUS_TI_DB` | `./sentinel-ti.db` | TI SQLite database |
+| `ARGUS_TI_URL` | _(empty)_ | If set, enrichment queries this TI URL first |
+| `ARGUS_TI_FEED_INTERVAL` | `3600` | Seconds between feed refreshes |
 | `ANTHROPIC_API_KEY` | _(empty)_ | Claude for AI alert triage |
 | `OPENAI_API_KEY` | _(empty)_ | GPT-4o-mini fallback triage |
 | `ABUSEIPDB_KEY` | _(empty)_ | AbuseIPDB enrichment |

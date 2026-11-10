@@ -124,6 +124,27 @@ class DB:
         )
         return eid
 
+    def list_events(self, agent_id=None, source=None, limit=200):
+        sql = "SELECT * FROM events WHERE 1=1"
+        params = []
+        if agent_id:
+            sql += " AND agent_id=?"
+            params.append(agent_id)
+        if source:
+            sql += " AND source=?"
+            params.append(source)
+        sql += " ORDER BY ts DESC LIMIT ?"
+        params.append(int(limit))
+        out = []
+        for row in self._query(sql, params):
+            d = dict(row)
+            try:
+                d["event"] = json.loads(d.pop("event_json") or "{}")
+            except (ValueError, TypeError):
+                d["event"] = {}
+            out.append(d)
+        return out
+
     # ---------- alerts ----------
     def insert_alert(self, a: dict) -> str:
         aid = uuid.uuid4().hex[:16]

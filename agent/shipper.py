@@ -38,6 +38,7 @@ class Shipper:
         self._next_retry = 0.0
         try:
             os.makedirs(self.spool_dir, exist_ok=True)
+            os.chmod(self.spool_dir, 0o700)  # spool holds raw telemetry
         except OSError as exc:
             log.warning("cannot create spool dir %s: %s", self.spool_dir, exc)
 
@@ -84,7 +85,7 @@ class Shipper:
 
     # -- internals ---------------------------------------------------------
     def _post(self, events):
-        """POST one batch. True = accepted (or rejected permanently); False = retry."""
+        """POST one batch. True = accepted (or parked in dead-letter); False = retry."""
         url = self.server + "/api/v1/events"
         payload = json.dumps({"events": events}).encode("utf-8")
         req = urllib.request.Request(
@@ -101,24 +102,55 @@ class Shipper:
             log.debug("shipped %d events (server accepted %s)", len(events), accepted)
             return True
         except urllib.error.HTTPError as exc:
-            # 401/403/4xx: retrying won't help -> drop with a loud log, keep going.
-            log.error("server rejected events: HTTP %s %s", exc.code, exc.reason)
             try:
-                log.error("server response: %s", exc.read().decode("utf-8", errors="replace")[:500])
+                body = exc.read().decode("utf-8", errors="replace")[:500]
             except Exception:
-                pass
+                body = ""
+            if exc.code == 429 or exc.code >= 500:
+                # Transient: server busy/down — keep the events and retry.
+                log.warning("server unavailable: HTTP %s; will retry. %s",
+                            exc.code, body)
+                return False
+            # Permanent rejection (401/403 bad key, 400/422 bad batch):
+            # retrying the same bytes will never succeed, but deleting them
+            # loses telemetry silently. Park the batch in a dead-letter file
+            # the operator can inspect and requeue, then keep the queue moving.
+            log.error("server rejected batch permanently: HTTP %s; "
+                      "moved to dead-letter. %s", exc.code, body)
+            self._deadletter(events, "http-%d" % exc.code)
             return True
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             log.warning("ship failed (%s); spooling", exc)
             return False
+
+    def _deadletter(self, events, reason):
+        """Park an undeliverable batch on disk instead of deleting it."""
+        name = "deadletter-%d-%d-%s.jsonl" % (int(time.time()), os.getpid(), reason)
+        path = os.path.join(self.spool_dir, name)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                for event in events:
+                    fh.write(json.dumps(event) + "\n")
+            log.error("dead-lettered %d events to %s (reason: %s)",
+                      len(events), path, reason)
+        except OSError as exc:
+            log.error("cannot write dead-letter file %s: %s; %d events lost",
+                      path, exc, len(events))
 
     def _read_spool_file(self, path):
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 return [json.loads(line) for line in fh if line.strip()]
         except (OSError, ValueError) as exc:
-            log.warning("cannot read spool file %s: %s (dropping)", path, exc)
-            _safe_unlink(path)
+            # Corrupt spool: quarantine it for inspection, do not delete.
+            bad = path + ".bad"
+            log.error("cannot read spool file %s: %s (quarantined as %s)",
+                      path, exc, bad)
+            try:
+                os.replace(path, bad)
+            except OSError:
+                pass
             return None
 
     def _spool_buffer(self):
@@ -128,7 +160,8 @@ class Shipper:
         name = "spool-%d-%d.jsonl" % (int(time.time()), os.getpid())
         path = os.path.join(self.spool_dir, name)
         try:
-            with open(path, "w", encoding="utf-8") as fh:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 for event in self.buffer:
                     fh.write(json.dumps(event) + "\n")
             log.info("spooled %d events to %s", len(self.buffer), path)
