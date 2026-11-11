@@ -3,7 +3,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id);
+CREATE INDEX IF NOT EXISTS idx_events_agent_ts ON events(agent_id, ts);
 
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts);
 CREATE INDEX IF NOT EXISTS idx_alerts_sev ON alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_alerts_agent_ts ON alerts(agent_id, ts);
 
 CREATE TABLE IF NOT EXISTS incidents (
     id TEXT PRIMARY KEY,
@@ -56,6 +58,7 @@ CREATE TABLE IF NOT EXISTS incidents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+CREATE INDEX IF NOT EXISTS idx_incidents_status_updated ON incidents(status, updated);
 
 CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
@@ -123,6 +126,17 @@ class DB:
              ev.get("raw")),
         )
         return eid
+
+    def prune_events(self, days: int) -> int:
+        """Delete raw events older than `days` (retention). Alerts and
+        incidents are the historical record and are never pruned."""
+        if days <= 0:
+            return 0
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self._lock:
+            cur = self.conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+            self.conn.commit()
+            return cur.rowcount
 
     def list_events(self, agent_id=None, source=None, limit=200):
         sql = "SELECT * FROM events WHERE 1=1"
@@ -281,9 +295,14 @@ class DB:
                         "status": r["status"], "created": r["created"]})
         return out
 
-    def ack_action(self, action_id, status, output):
-        self._exec("UPDATE actions SET status=?, acked_at=?, output=? WHERE id=?",
-                   (status, now_iso(), output, action_id))
+    def ack_action(self, agent_id, action_id, status, output):
+        """Acknowledge an action. The action must belong to the acking
+        agent; returns True only when a row was actually updated, so one
+        agent can never close out another agent's containment action."""
+        cur = self._exec(
+            "UPDATE actions SET status=?, acked_at=?, output=? WHERE id=? AND agent_id=?",
+            (status, now_iso(), output, action_id, agent_id))
+        return cur.rowcount > 0
 
     # ---------- kv (baselines, intel cache) ----------
     def kv_get(self, key):

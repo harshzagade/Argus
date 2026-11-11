@@ -18,9 +18,11 @@ import ipaddress
 import json
 import logging
 import re
+import socket
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -94,18 +96,19 @@ def parse_txt(content: str, forced_type: str = None) -> list[dict]:
 def parse_csv(content: str, value_col: int = 0, type_col: int = None,
               skip_header: bool = True, forced_type: str = None) -> list[dict]:
     """Parse CSV. value_col/type_col are 0-based column indices."""
+    import csv as _csv
+    import io as _io
     iocs = []
-    lines = content.splitlines()
-    if skip_header and lines:
-        lines = lines[1:]
-    for line in lines:
-        parts = line.split(",")
+    rows = list(_csv.reader(_io.StringIO(content)))
+    if skip_header and rows:
+        rows = rows[1:]
+    for parts in rows:
         if len(parts) <= value_col:
             continue
-        value = parts[value_col].strip().strip('"')
+        value = parts[value_col].strip()
         ioc_type = forced_type
         if type_col is not None and len(parts) > type_col:
-            ioc_type = parts[type_col].strip().strip('"').lower()
+            ioc_type = parts[type_col].strip().lower()
         if not ioc_type:
             ioc_type = classify_value(value)
         if not ioc_type or not value:
@@ -269,6 +272,57 @@ _SCORE_MAP = {
 }
 
 
+MAX_FEED_BYTES = 32 * 1024 * 1024
+
+# Explicit deny-list (not ip.is_global): proxied/corporate DNS legitimately
+# answers with shared ranges like 198.18.0.0/15, so "not global" would break
+# every real feed there. What must never be reachable is internal space:
+# loopback, RFC1918, link-local (incl. the cloud metadata address),
+# multicast and reserved ranges.
+_BLOCKED_NETS = [
+    ipaddress.ip_network(n) for n in (
+        "0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16",
+        "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+        "::/128", "::1/128", "fe80::/10", "fc00::/7", "ff00::/8",
+    )
+]
+
+
+def _validate_feed_url(url: str):
+    """SSRF guard for feed fetching. Feeds are operator-configured, but the
+    API accepts new feeds at runtime, so a feed URL must never be able to
+    read local files (file://) or reach internal services (cloud metadata,
+    localhost, LAN addresses). Only public http(s) targets are allowed."""
+    p = urllib.parse.urlparse(url)
+    if p.scheme not in ("http", "https"):
+        raise RuntimeError(f"feed URL scheme not allowed: {p.scheme or '(none)'}")
+    host = p.hostname
+    if not host:
+        raise RuntimeError("feed URL has no host")
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError as e:
+        raise RuntimeError(f"feed host DNS failed ({host}): {e}") from e
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if any(ip in net for net in _BLOCKED_NETS):
+            raise RuntimeError(
+                f"feed host {host} resolves to a blocked internal address ({ip})")
+
+
+class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-validate every redirect target with the same SSRF guard."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_feed_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_guarded_opener = urllib.request.build_opener(_GuardedRedirectHandler)
+
+
 class FeedRunner:
     """Fetches and ingests one feed run."""
 
@@ -298,11 +352,23 @@ class FeedRunner:
 
     def _fetch(self, feed: dict) -> str:
         headers = json.loads(feed.get("headers_json") or "{}")
+        _validate_feed_url(feed["url"])
         req = urllib.request.Request(feed["url"], headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                raw = r.read()
-            return raw.decode("utf-8", errors="replace")
+            with _guarded_opener.open(req, timeout=self.timeout) as r:
+                chunks, total = [], 0
+                while True:
+                    chunk = r.read(65536)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_FEED_BYTES:
+                        raise RuntimeError(
+                            f"feed response exceeds {MAX_FEED_BYTES} bytes")
+                    chunks.append(chunk)
+            return b"".join(chunks).decode("utf-8", errors="replace")
+        except RuntimeError:
+            raise
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise RuntimeError(f"fetch failed: {e}") from e
 
@@ -324,34 +390,41 @@ class FeedRunner:
             return []
 
     def _ingest(self, iocs: list[dict], source: str) -> tuple[int, int, int]:
-        added = updated = errors = 0
+        """Bulk-ingest parsed IOCs in ONE database transaction.
+
+        The old loop did a lookup + upsert + commit per IOC, which made a
+        20k-line feed take minutes. Rows are de-duplicated first (feeds
+        repeat values), then written by ThreatIntelDB.bulk_upsert_iocs.
+        """
+        rows, seen, errors = [], set(), 0
         for ioc in iocs:
             try:
                 value = ioc.get("value", "")
                 ioc_type = ioc.get("type", "")
                 if not value or not ioc_type:
                     continue
-                score = ioc.get("score", 70)
+                if (value, ioc_type) in seen:
+                    continue
+                seen.add((value, ioc_type))
+                score = ioc.get("score", feed.get("default_score") or 70)
                 reputation = ("malicious" if score >= 75 else
                               "suspicious" if score >= 40 else "clean")
-                existing = self.db.lookup(value)
-                self.db.upsert_ioc(
-                    ioc_type=ioc_type,
-                    value=value,
-                    score=score,
-                    reputation=reputation,
-                    confidence="medium",
-                    source=source,
-                    context=ioc.get("context", {}),
-                    description=ioc.get("description", ""),
-                )
-                if existing:
-                    updated += 1
-                else:
-                    added += 1
+                rows.append({
+                    "type": ioc_type, "value": value, "score": score,
+                    "reputation": reputation, "confidence": "medium",
+                    "source": source, "context": ioc.get("context", {}),
+                    "description": ioc.get("description", ""),
+                })
             except Exception as e:
                 log.debug("ingest error for %s: %s", ioc, e)
                 errors += 1
+        if not rows:
+            return 0, 0, errors
+        try:
+            added, updated = self.db.bulk_upsert_iocs(rows)
+        except Exception as e:
+            log.warning("bulk ingest failed for %s: %s", source, e)
+            return 0, 0, errors + len(rows)
         return added, updated, errors
 
 

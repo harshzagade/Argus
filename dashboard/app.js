@@ -743,23 +743,23 @@ const TACTIC_ORDER = ['Initial Access', 'Execution', 'Persistence', 'Privilege E
   'Collection', 'Command and Control', 'Exfiltration', 'Impact'];
 const TECH_TACTIC = {
   'T1003': 'Credential Access', 'T1003.001': 'Credential Access', 'T1003.008': 'Credential Access',
-  'T1021.004': 'Lateral Movement',
+  'T1016': 'Discovery', 'T1021.004': 'Lateral Movement', 'T1033': 'Discovery',
   'T1041': 'Exfiltration', 'T1048': 'Exfiltration',
-  'T1053.003': 'Persistence',
+  'T1053': 'Persistence', 'T1053.003': 'Persistence', 'T1053.006': 'Persistence',
   'T1059': 'Execution', 'T1059.004': 'Execution',
   'T1070': 'Defense Evasion', 'T1070.004': 'Defense Evasion',
   'T1071': 'Command and Control', 'T1071.004': 'Command and Control',
-  'T1078': 'Persistence', 'T1098.004': 'Persistence',
-  'T1110.001': 'Credential Access',
+  'T1078': 'Persistence', 'T1082': 'Discovery', 'T1083': 'Discovery',
+  'T1098.004': 'Persistence', 'T1105': 'Command and Control',
+  'T1110.001': 'Credential Access', 'T1110.003': 'Credential Access', 'T1110.004': 'Credential Access',
   'T1136': 'Persistence', 'T1136.001': 'Persistence',
-  'T1204.002': 'Execution',
+  'T1190': 'Initial Access', 'T1204.002': 'Execution',
   'T1222.002': 'Defense Evasion',
-  'T1486': 'Impact',
-  'T1505.003': 'Persistence',
+  'T1486': 'Impact', 'T1505.003': 'Persistence',
   'T1543.002': 'Persistence', 'T1547.006': 'Persistence',
-  'T1548.003': 'Privilege Escalation',
-  'T1562.001': 'Defense Evasion', 'T1562.004': 'Impact',
-  'T1611': 'Privilege Escalation',
+  'T1548.003': 'Privilege Escalation', 'T1556': 'Defense Evasion',
+  'T1562.001': 'Defense Evasion', 'T1562.004': 'Defense Evasion',
+  'T1565.001': 'Impact', 'T1611': 'Privilege Escalation',
 };
 
 /* ATT&CK navigator-style heatmap: techniques grouped by tactic, colored by alert volume. */
@@ -926,6 +926,22 @@ function handleFrame(f) {
 function wire() {
   document.querySelectorAll('.nav-btn').forEach((b) =>
     b.addEventListener('click', () => showView(b.dataset.view)));
+
+  // Home buttons (sidebar brand + top-bar 'Security Operations' crumb):
+  // from any other view they go to the dashboard; on the dashboard itself
+  // they refresh the data.
+  const goHome = () => {
+    if (S.view === 'overview') refreshCurrent();
+    else showView('overview');
+  };
+  ['brandHome', 'crumbHome'].forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener('click', goHome);
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goHome(); }
+    });
+  });
 
   $('settingsBtn').addEventListener('click', () => openSettings());
   $('saveKeyBtn').addEventListener('click', () => {
@@ -1546,7 +1562,7 @@ async function tiLookupValue() {
           <span class="muted">score: ${hit.score || 0}/100</span>
         </div>
         ${hit.description ? `<div class="small muted">${esc(hit.description)}</div>` : ''}
-        ${hit.context && Object.keys(hit.context).length ? `<div class="small muted">${Object.entries(hit.context).map(([k,v]) => `${k}: ${v}`).join(' · ')}</div>` : ''}
+        ${hit.context && Object.keys(hit.context).length ? `<div class="small muted">${Object.entries(hit.context).map(([k,v]) => `${esc(k)}: ${esc(String(v))}`).join(' · ')}</div>` : ''}
         <div class="small muted">Source: ${esc(hit.source || 'unknown')} · First seen: ${timeAgo(hit.first_seen)} · Last seen: ${timeAgo(hit.last_seen)}</div>
       </div>`;
   } else {

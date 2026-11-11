@@ -60,6 +60,7 @@ class TailReader:
         self._offset = 0
         self._inode = None
         self._missing_warned = False
+        self._primed = False
 
     def _stat(self):
         try:
@@ -82,7 +83,11 @@ class TailReader:
         # Rotation / truncation: inode changed or file shrank -> start over.
         if self._inode != st.st_ino or st.st_size < self._offset:
             self._inode = st.st_ino
-            self._offset = 0
+            # First sight of a file: start at the END. Starting at 0
+            # replayed the whole log as fresh events on every agent
+            # restart (fake brute-force bursts, stale IPs auto-blocked).
+            self._offset = 0 if self._primed else st.st_size
+            self._primed = True
         if st.st_size == self._offset:
             return []
         lines = []

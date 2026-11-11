@@ -2,7 +2,7 @@
   name: Hosts file modified
   description: /etc/hosts was created or modified. Attackers edit the hosts file to silently redirect traffic for selected domains to attacker-controlled servers, enabling credential interception without any DNS change.
   severity: high
-  mitre: [T1557]
+  mitre: [T1565.001]
   compliance:
     pci_dss: ["11.5.1"]
     gdpr: ["Art.32"]

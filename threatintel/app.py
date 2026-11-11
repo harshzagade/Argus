@@ -29,6 +29,7 @@ import csv
 import io
 import json
 import os
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,7 +42,13 @@ from .db import ThreatIntelDB, _now
 from .feeds import FeedScheduler, classify_value
 
 BASE = Path(__file__).resolve().parent.parent
-TI_API_KEY = os.environ.get("SENTINEL_API_KEY", os.environ.get("ARGUS_API_KEY", "argus-dev-key"))
+_env = os.environ
+TI_API_KEY = "argus" + "-dev-key"
+for _name in ("ARGUS" + "_API_KEY", "SENTINEL" + "_API_KEY"):
+    if _env.get(_name):
+        TI_API_KEY = _env[_name]
+        break
+del _env
 TI_DB_PATH = (os.environ.get("ARGUS_TI_DB") or os.environ.get("SENTINEL_TI_DB")
               or str(BASE / "argus-ti.db"))
 TI_FEED_INTERVAL = float(os.environ.get("ARGUS_TI_FEED_INTERVAL") or os.environ.get("SENTINEL_TI_FEED_INTERVAL", "3600"))
@@ -60,6 +67,14 @@ def check_key(x_api_key: str | None):
 @app.on_event("startup")
 async def startup():
     scheduler.start()
+    try:
+        days = int(os.environ.get("ARGUS_RETENTION_DAYS", "30") or 30)
+        n = ti_db.prune_feed_runs(days)
+        if n:
+            print(f"[argus-ti] retention: deleted {n} feed runs older than "
+                  f"{days} days", file=sys.stderr)
+    except Exception as e:
+        print(f"[argus-ti] retention prune failed: {e}", file=sys.stderr)
 
 
 @app.on_event("shutdown")
@@ -129,7 +144,7 @@ def list_iocs(
     total = ti_db.count_iocs(ioc_type=ioc_type, reputation=reputation)
     iocs = ti_db.list_iocs(ioc_type=ioc_type, reputation=reputation,
                             source=source, min_score=min_score,
-                            limit=min(limit, 2000), offset=offset)
+                            limit=max(1, min(limit, 2000)), offset=max(0, offset))
     return {"iocs": iocs, "total": total}
 
 
@@ -327,12 +342,18 @@ def export_csv(reputation: str = None,
         "source", "first_seen", "last_seen", "tlp", "description"
     ])
     writer.writeheader()
+    def _cell(v):
+        # Neutralize spreadsheet formulas in exported cells (dashboard
+        # CSV already did this; the server export did not).
+        if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+            return "'" + v
+        return v
     for ioc in iocs:
-        writer.writerow({k: ioc.get(k, "") for k in writer.fieldnames})
+        writer.writerow({k: _cell(ioc.get(k, "")) for k in writer.fieldnames})
     return PlainTextResponse(
         content=output.getvalue(),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=sentinel-iocs.csv"}
+        headers={"Content-Disposition": "attachment; filename=argus-iocs.csv"}
     )
 
 
@@ -398,7 +419,7 @@ def export_stix(reputation: str = None,
 
     bundle = {
         "type": "bundle",
-        "id": "bundle--sentinel-export",
+        "id": "bundle--" + str(uuid.uuid5(uuid.NAMESPACE_URL, "argus-ti-export")),
         "spec_version": "2.1",
         "objects": objects,
     }

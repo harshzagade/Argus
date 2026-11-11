@@ -2,7 +2,7 @@
   name: Sudoers configuration modified
   description: /etc/sudoers or a file under /etc/sudoers.d was created or modified. Attackers and rogue administrators use sudoers changes for persistent privilege escalation.
   severity: high
-  mitre: [T1548.003, T1222.002]
+  mitre: [T1548.003]
   compliance:
     pci_dss: ["11.5.1", "10.2.4"]
     gdpr: ["Art.32"]

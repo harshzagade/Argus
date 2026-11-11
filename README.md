@@ -31,7 +31,7 @@ argus/
 │   ├── index.html       + Honeypot + Threat Intel views
 │   └── app.js           + all Argus-specific JS
 ├── simulator/       Attack scenario replay (+ honeypot + TI scenarios)
-└── docker-compose.yml   sentinel + honeypot + simulator services
+└── docker-compose.yml   argus + honeypot + simulator services
 ```
 
 ---
@@ -80,7 +80,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
 # 2. Start the Argus server (SIEM + TI on port 8000)
-.venv/bin/uvicorn server.sentinel_app:app --port 8000
+.venv/bin/uvicorn server.argus_app:app --port 8000
 
 # 3. (Optional) Start the honeypot in another terminal
 .venv/bin/python -m honeypot.honeypot_server \
@@ -123,7 +123,7 @@ The TI platform is a lightweight MISP-inspired IOC management system.
 | Feed | Type | Format |
 |---|---|---|
 | Feodo Tracker C2 | IP | txt |
-| URLhaus Malware URLs | URL | txt |
+| URLhaus Malicious Domains | Domain/IP | txt |
 | OpenPhish Phishing URLs | URL | txt |
 | Emerging Threats Compromised IPs | IP | txt |
 | MISP Warning Lists | CIDR | JSON |
@@ -220,7 +220,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full contract.
 | GET | `/api/ti/v1/export/stix` | Export IOCs as STIX 2.1 |
 | POST | `/api/ti/v1/enrich` | Enrichment bridge for Argus |
 
-### Argus health (`/api/sentinel/*`)
+### Argus health (`/api/argus/*`)
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/argus/health` | All-component health check |
@@ -281,7 +281,7 @@ ARG-9004  Authentication failure burst       high      (UEBA)
 | `ARGUS_API_KEY` | `argus-dev-key` | Shared API key for SIEM |
 | `ARGUS_DB` | `./argus.db` | SIEM SQLite database |
 | `ARGUS_API_KEY` | same as ARGUS_API_KEY | TI platform API key |
-| `ARGUS_TI_DB` | `./sentinel-ti.db` | TI SQLite database |
+| `ARGUS_TI_DB` | `./argus-ti.db` | TI SQLite database |
 | `ARGUS_TI_URL` | _(empty)_ | If set, enrichment queries this TI URL first |
 | `ARGUS_TI_FEED_INTERVAL` | `3600` | Seconds between feed refreshes |
 | `ANTHROPIC_API_KEY` | _(empty)_ | Claude for AI alert triage |

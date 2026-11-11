@@ -18,6 +18,7 @@ import ipaddress
 import json
 import os
 import re
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -33,13 +34,21 @@ ENV_RE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 def render(value, ctx):
     if isinstance(value, str):
+        # ${SOME_ENV_VAR} expands FIRST, from the raw operator-written
+        # template only (empty if unset, so a webhook without a
+        # configured URL is skipped, not mis-sent). Alert data is
+        # substituted afterwards with any "${" inside it defused, so
+        # attacker-controlled text (a honeypot command line, a username)
+        # can never trigger a second round of env expansion and leak
+        # server secrets into notifications or webhooks.
+        value = ENV_RE.sub(lambda m: os.environ.get(m.group(1), ""), value)
+
         def repl(m):
             v = get_field(ctx, m.group(1))
-            return str(v) if v is not None else m.group(0)
-        value = TEMPLATE_RE.sub(repl, value)
-        # ${SOME_ENV_VAR} expands from the server environment (empty if unset,
-        # so a webhook without a configured URL is skipped, not mis-sent).
-        return ENV_RE.sub(lambda m: os.environ.get(m.group(1), ""), value)
+            if v is None:
+                return m.group(0)
+            return str(v).replace("${", "$ {")
+        return TEMPLATE_RE.sub(repl, value)
     if isinstance(value, dict):
         return {k: render(v, ctx) for k, v in value.items()}
     if isinstance(value, list):
@@ -86,6 +95,57 @@ def _never_block(ip_str):
     return any(addr in net for net in NEVER_BLOCK)
 
 
+def _validate_params(action, params, raw_params):
+    """Rendered playbook values come from alert data, and attackers
+    influence alert data (usernames, file paths, IPs in the triggering
+    event). Validate every action's parameters AFTER rendering and
+    BEFORE anything is enqueued or sent. Returns a reason or None.
+
+    This closes the template-injection gap: substitution itself is not
+    the problem (values are data), the problem was sinks consuming them
+    unvalidated. block_ip already validates its IP; this covers the rest.
+    """
+    for v in params.values():
+        if isinstance(v, str):
+            # Oversized values are rejected for anything an agent or a
+            # webhook will consume. notify is the exception: its text is
+            # display data and is truncated to a safe length when sent.
+            if len(v) > 1024 and action != "notify":
+                return "param_too_long"
+            if any(ord(c) < 32 for c in v):
+                return "param_control_chars"
+    if action == "quarantine":
+        path = str(params.get("path", ""))
+        if not path.startswith("/") or path == "/" or ".." in path.split("/"):
+            return "unsafe_quarantine_path"
+    if action == "run":
+        # A shell command must be an operator-written constant from the
+        # playbook file; event data may never flow into it. Identity
+        # fields ({agent_id}, {hostname}) are assigned by the server,
+        # not by the event, so playbooks may use those (evidence
+        # snapshots name their output files by agent).
+        cmd = str((raw_params or {}).get("command", ""))
+        refs = {"{" + m + "}" for m in TEMPLATE_RE.findall(cmd)}
+        if refs - {"{agent_id}", "{hostname}"}:
+            return "run_command_uses_alert_data"
+    if action == "webhook":
+        url = str(params.get("url", ""))
+        if url:
+            p = urllib.parse.urlparse(url)
+            if p.scheme not in ("http", "https") or not p.hostname:
+                return "unsafe_webhook_url"
+            try:
+                ip = ipaddress.ip_address(p.hostname)
+                if ip.version == 6 and ip.ipv4_mapped:
+                    ip = ip.ipv4_mapped
+                if (ip.is_loopback or ip.is_link_local or ip.is_multicast
+                        or ip.is_private or ip.is_reserved):
+                    return "unsafe_webhook_url"
+            except ValueError:
+                pass  # a hostname, not an IP literal
+    return None
+
+
 def run_playbook(db, notify, pb: dict, alert: dict):
     """Execute playbook steps. notify(frame) pushes a WS notification."""
     ctx = {"entities": alert.get("entities", {}), "alert": alert,
@@ -109,6 +169,10 @@ def run_playbook(db, notify, pb: dict, alert: dict):
             if ip_ok:
                 results.append({"action": action, "status": "skipped_never_block"})
                 continue
+        invalid = _validate_params(action, params, step.get("params", {}))
+        if invalid:
+            results.append({"action": action, "status": f"skipped_{invalid}"})
+            continue
         try:
             if action in AGENT_ACTIONS and target == "agent" and alert.get("agent_id"):
                 aid = db.enqueue_action(alert["agent_id"], action, params)
@@ -125,8 +189,8 @@ def run_playbook(db, notify, pb: dict, alert: dict):
                     results.append({"action": "webhook", "status": "skipped_no_url"})
             elif action == "notify":
                 notify({"type": "notification",
-                        "channel": params.get("channel", "soc"),
-                        "message": params.get("message", alert.get("title")),
+                        "channel": str(params.get("channel", "soc"))[:50],
+                        "message": str(params.get("message", alert.get("title") or ""))[:500],
                         "severity": alert.get("severity")})
                 results.append({"action": "notify", "status": "sent"})
             else:

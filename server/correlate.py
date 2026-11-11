@@ -1,7 +1,13 @@
 """Incident correlation: group related alerts into incidents.
 
-Two alerts join the same incident when they share the agent and at least one
-entity value (IP, user, hash, path...) within a 30-minute sliding window.
+Join rules (within a 30-minute sliding window):
+  - same agent + any shared non-generic entity value, or
+  - different agents + a shared STRONG entity (attacker IP, hash, domain,
+    URL) — one campaign hitting two machines is one case, not two.
+Generic values (user "root", ports, "unknown") never join anything by
+themselves, and matching is by (key, value) pair so a user named "22" can
+never collide with port 22. Open AND acknowledged incidents absorb new
+alerts; only closed ones stop growing.
 Incident severity = max severity of its alerts.
 """
 import json
@@ -11,6 +17,25 @@ from .rules import SEVERITY_RANK
 
 WINDOW = timedelta(minutes=30)
 
+STRONG_KEYS = {"src_ip", "dst_ip", "ip", "hash", "sha256", "md5", "domain", "url"}
+GENERIC_VALUES = {"", "none", "null", "unknown", "root", "www-data", "nobody",
+                  "daemon", "bin", "sys", "sshd", "system", "auth", "-",
+                  "0", "22", "80", "443"}
+
+
+def _pairs(entities) -> set:
+    """(key, value) pairs worth joining on; generic values removed."""
+    out = set()
+    for k, v in (entities or {}).items():
+        for x in (v if isinstance(v, list) else [v]):
+            if x is None:
+                continue
+            sv = str(x)
+            if sv.strip().lower() in GENERIC_VALUES:
+                continue
+            out.add((k, sv))
+    return out
+
 
 def _parse(ts):
     return datetime.fromisoformat(ts)
@@ -18,23 +43,33 @@ def _parse(ts):
 
 def correlate(db, alert: dict) -> str:
     """Attach alert to a matching open incident or create one. Returns incident id."""
-    now = datetime.now(timezone.utc)
     alert_entities = alert.get("entities", {}) or {}
-    entity_values = {str(v) for v in alert_entities.values() if v}
+    alert_pairs = _pairs(alert_entities)
+    now = datetime.now(timezone.utc)
+    if alert.get("ts"):
+        try:
+            now = _parse(alert["ts"])
+            if not now.tzinfo:
+                now = now.replace(tzinfo=timezone.utc)
+        except Exception:
+            now = datetime.now(timezone.utc)
 
+    candidates = list(db.open_incidents())
+    candidates += db.list_incidents(status="acknowledged", limit=500)
     best = None
-    for inc in db.open_incidents():
+    for inc in candidates:
         updated = _parse(inc["updated"])
+        if not updated.tzinfo:
+            updated = updated.replace(tzinfo=timezone.utc)
         if now - updated > WINDOW:
             continue
-        agents = json.loads(inc["agents_json"] or "[]")
-        if alert.get("agent_id") and alert["agent_id"] not in agents:
+        shared = alert_pairs & _pairs(json.loads(inc["entities_json"] or "{}"))
+        if not shared:
             continue
-        inc_entities = json.loads(inc["entities_json"] or "{}")
-        inc_values = set()
-        for v in inc_entities.values():
-            inc_values.update(str(x) for x in (v if isinstance(v, list) else [v]))
-        if entity_values & inc_values:
+        agents = json.loads(inc["agents_json"] or "[]")
+        same_agent = not alert.get("agent_id") or alert["agent_id"] in agents
+        strong = any(k in STRONG_KEYS for k, _ in shared)
+        if same_agent or strong:
             best = inc
             break
 

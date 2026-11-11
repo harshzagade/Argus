@@ -1,6 +1,8 @@
 """Argus server: ingest -> detect -> enrich -> triage -> correlate -> respond."""
 import asyncio
 import hmac
+import threading
+import time
 import sys
 import json
 import os
@@ -109,11 +111,15 @@ def normalize_event(raw: dict) -> dict:
             datetime.fromisoformat(ts)
         except Exception:
             ev["ts"] = now_iso()
-    # Derive the local hour of the event timestamp so time-based rules
+    # Derive the LOCAL hour of the event timestamp so time-based rules
     # (e.g. off-hours logins) work without agents sending it explicitly.
+    # Agents ship UTC timestamps; "3 AM" must mean 3 AM where the operator
+    # is, not 3 AM UTC.
     try:
         if isinstance(ev.get("event"), dict):
-            ev["event"].setdefault("hour", datetime.fromisoformat(ev["ts"]).hour)
+            dt = datetime.fromisoformat(ev["ts"])
+            hour = dt.astimezone().hour if dt.tzinfo else dt.hour
+            ev["event"].setdefault("hour", hour)
     except Exception:
         pass
     return ev
@@ -149,6 +155,58 @@ def update_risk(agent_id):
     db.set_risk(agent_id, min(100, score))
 
 
+RETENTION_DAYS = int(os.environ.get("ARGUS_RETENTION_DAYS", "30") or 30)
+
+
+@app.on_event("startup")
+async def _start_retention():
+    """Raw events are the firehose; keep 30 days by default so the database
+    cannot grow forever. Alerts and cases are the record and are kept.
+    Set ARGUS_RETENTION_DAYS=0 to disable."""
+
+    async def _loop():
+        while True:
+            try:
+                n = db.prune_events(RETENTION_DAYS)
+                if n:
+                    print(f"[argus] retention: deleted {n} raw events older "
+                          f"than {RETENTION_DAYS} days", file=sys.stderr)
+            except Exception as e:  # never let housekeeping kill the server
+                print(f"[argus] retention prune failed: {e}", file=sys.stderr)
+            await asyncio.sleep(24 * 3600)
+
+    asyncio.create_task(_loop())
+
+
+# --- Ingest rate limiting -------------------------------------------------
+# A SIEM must survive a flooding or malfunctioning agent. Per-agent token
+# bucket: generous for real agents (they ship small batches), a hard stop
+# for runaway floods. Tune with ARGUS_INGEST_RATE_PER_MIN / ARGUS_INGEST_BURST.
+_INGEST_RATE = int(os.environ.get("ARGUS_INGEST_RATE_PER_MIN", "3000") or 3000)
+_INGEST_BURST = int(os.environ.get("ARGUS_INGEST_BURST", "6000") or 6000)
+_ingest_buckets: dict = {}
+_ingest_lock = threading.Lock()
+
+
+def _ingest_allow(agent_id: str, cost: int) -> bool:
+    now = time.monotonic()
+    with _ingest_lock:
+        if agent_id not in _ingest_buckets and len(_ingest_buckets) >= 1000:
+            # Bound the bucket map: arbitrary agent ids must not grow it
+            # forever. Evict the 100 least-recently-used buckets.
+            for k, _ in sorted(_ingest_buckets.items(),
+                               key=lambda kv: kv[1][1])[:100]:
+                _ingest_buckets.pop(k, None)
+        tokens, last = _ingest_buckets.get(agent_id, (float(_INGEST_BURST), now))
+        tokens = min(float(_INGEST_BURST),
+                     tokens + (now - last) * (_INGEST_RATE / 60.0))
+        if cost > tokens:
+            _ingest_buckets[agent_id] = (tokens, now)
+            return False
+        _ingest_buckets[agent_id] = (tokens - cost, now)
+        return True
+
+
 class IngestBody(BaseModel):
     events: list[dict] = Field(min_length=1, max_length=5000)
 
@@ -156,23 +214,38 @@ class IngestBody(BaseModel):
 @app.post("/api/v1/events")
 async def ingest(body: IngestBody, x_api_key: str | None = Header(default=None)):
     check_api_key(x_api_key)
+    # Charge EVERY agent present in the batch, not just the first
+    # event's: a mixed-agent batch must not ride on one agent's bucket.
+    from collections import Counter
+    for ag, n in Counter((e.get("agent_id") or "unknown")
+                         for e in body.events).items():
+        if not _ingest_allow(ag, n):
+            raise HTTPException(status_code=429,
+                                detail=f"ingest rate limit exceeded for agent {ag}")
     accepted = 0
+    rejected = 0
     new_alerts = 0
     for raw in body.events:
-        ev = normalize_event(raw)
-        eid = db.insert_event(ev)
-        db.upsert_agent(ev["agent_id"], ev.get("hostname"), ev.get("os"), ev.get("agent_version"))
-        candidates = anomaly_analyze(db, ev) + engine.process(ev)
-        for alert in candidates:
-            aid, iid = process_alert(alert, [eid])
-            new_alerts += 1
-            await broadcast({"type": "alert", "alert": alert})
-            inc = db.get_incident(iid)
-            if inc:
-                await broadcast({"type": "incident", "incident": inc})
+        try:
+            ev = normalize_event(raw)
+            eid = db.insert_event(ev)
+            db.upsert_agent(ev["agent_id"], ev.get("hostname"), ev.get("os"), ev.get("agent_version"))
+            candidates = anomaly_analyze(db, ev) + engine.process(ev)
+            for alert in candidates:
+                aid, iid = await asyncio.to_thread(process_alert, alert, [eid])
+                new_alerts += 1
+                await broadcast({"type": "alert", "alert": alert})
+                inc = db.get_incident(iid)
+                if inc:
+                    await broadcast({"type": "incident", "incident": inc})
+        except Exception:
+            # One poison event must not 500 the whole batch (the sender
+            # would retry it forever, duplicating everything before it).
+            rejected += 1
+            continue
         accepted += 1
     await broadcast({"type": "ingest", "accepted": accepted, "new_alerts": new_alerts})
-    return {"accepted": accepted, "new_alerts": new_alerts}
+    return {"accepted": accepted, "new_alerts": new_alerts, "rejected": rejected}
 
 
 @app.get("/api/v1/alerts")
@@ -181,7 +254,7 @@ def get_alerts(severity: str = None, rule_id: str = None, agent_id: str = None,
                x_api_key: str | None = Header(default=None)):
     check_api_key(x_api_key)
     total = db.count_alerts(severity, rule_id, agent_id, since)
-    return {"alerts": db.list_alerts(severity, rule_id, agent_id, min(limit, 1000), since),
+    return {"alerts": db.list_alerts(severity, rule_id, agent_id, max(1, min(limit, 1000)), since),
             "total": total}
 
 
@@ -198,7 +271,7 @@ def get_alert(aid: str, x_api_key: str | None = Header(default=None)):
 def get_incidents(status: str = None, limit: int = 100,
                   x_api_key: str | None = Header(default=None)):
     check_api_key(x_api_key)
-    return {"incidents": db.list_incidents(status, min(limit, 500))}
+    return {"incidents": db.list_incidents(status, max(1, min(limit, 500)))}
 
 
 @app.get("/api/v1/incidents/{iid}")
@@ -269,7 +342,12 @@ def poll_actions(agent_id: str, x_agent_key: str | None = Header(default=None)):
 def ack_action(agent_id: str, action_id: str, body: dict,
                x_agent_key: str | None = Header(default=None)):
     check_agent_key(x_agent_key, agent_id)
-    db.ack_action(action_id, body.get("status", "done"), body.get("output", ""))
+    status = body.get("status", "done")
+    if status not in ("done", "failed", "dry_run"):
+        raise HTTPException(status_code=422, detail="invalid action status")
+    if not db.ack_action(agent_id, action_id, status, body.get("output", "")):
+        raise HTTPException(status_code=404,
+                            detail="action not found for this agent")
     return {"ok": True}
 
 
@@ -323,7 +401,7 @@ def list_events(agent_id: str | None = None, source: str | None = None,
                 limit: int = 200, x_api_key: str | None = Header(default=None)):
     check_api_key(x_api_key)
     return {"events": db.list_events(agent_id=agent_id, source=source,
-                                     limit=min(int(limit), 1000))}
+                                     limit=max(1, min(int(limit), 1000)))}
 
 
 @app.get("/api/v1/notifications")

@@ -7,10 +7,13 @@ SUSPICIOUS_EXE_DIRS = ("/tmp/", "/var/tmp/", "/dev/shm/", "/home/", "/root/")
 
 
 def _hour(ts_iso):
+    """Local hour of an event timestamp (agents ship UTC; baselines and the
+    unusual-hour rule must speak the operator's timezone)."""
     try:
-        return datetime.fromisoformat(ts_iso).hour
+        dt = datetime.fromisoformat(ts_iso)
+        return dt.astimezone().hour if dt.tzinfo else dt.hour
     except Exception:
-        return datetime.now(timezone.utc).hour
+        return datetime.now().hour
 
 
 def analyze(db, event: dict):

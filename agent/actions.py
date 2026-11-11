@@ -278,7 +278,7 @@ class ActionPoller:
         outputs = []
         saw_dry = False
         for cmd in rules:
-            for _ in range(10):  # delete duplicates too
+            for _ in range(50):  # delete duplicates too
                 st, out = self._exec_priv(cmd, "release")
                 outputs.append(out)
                 if st == "dry_run":

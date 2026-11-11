@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import time
@@ -255,6 +256,8 @@ class HoneypotSession:
         self.categories: set[str] = set()
 
     def add_attempt(self, user: str, password: str, success: bool):
+        if len(self.login_attempts) >= 200:
+            return  # bounded: a flood session must not grow memory forever
         self.login_attempts.append({
             "ts": _now(), "user": user, "password": password,
             "success": success
@@ -264,6 +267,8 @@ class HoneypotSession:
             self.success_pass = password
 
     def add_command(self, cmd: str, output: str, category: str):
+        if len(self.commands) >= 500:
+            return  # bounded: a flood session must not grow memory forever
         self.commands.append({
             "ts": _now(), "cmd": cmd, "output": output[:200],
             "category": category
@@ -352,8 +357,64 @@ class SessionStore:
 # Argus shipper: converts closed sessions -> Argus events
 # ---------------------------------------------------------------------------
 
+class _ConnLimiter:
+    """Per-IP connection flood control for the honeypots: caps concurrent
+    sessions per source IP, new connections per minute per IP, and total
+    concurrent sessions. Excess connections are dropped at accept time,
+    before any session state exists (slowloris / connection-flood guard).
+    """
+
+    def __init__(self, per_ip_concurrent: int = 4, global_concurrent: int = 64,
+                 per_ip_per_minute: int = 30):
+        self.per_ip_concurrent = per_ip_concurrent
+        self.global_concurrent = global_concurrent
+        self.per_ip_per_minute = per_ip_per_minute
+        self._lock = threading.Lock()
+        self._conc: dict = {}
+        self._window: dict = {}
+        self._total = 0
+
+    def allow(self, ip: str) -> bool:
+        now = time.time()
+        with self._lock:
+            hits = [t for t in self._window.get(ip, []) if now - t < 60]
+            self._window[ip] = hits
+            if len(hits) >= self.per_ip_per_minute:
+                return False
+            if self._conc.get(ip, 0) >= self.per_ip_concurrent:
+                return False
+            if self._total >= self.global_concurrent:
+                return False
+            hits.append(now)
+            self._conc[ip] = self._conc.get(ip, 0) + 1
+            self._total += 1
+            return True
+
+    def release(self, ip: str):
+        with self._lock:
+            if self._conc.get(ip, 0) > 0:
+                self._conc[ip] -= 1
+            if self._total > 0:
+                self._total -= 1
+
+
 class HoneypotShipper:
-    """Converts honeypot sessions to Argus events and ships them."""
+    """Converts honeypot sessions to Argus events and ships them reliably.
+
+    Durability contract (same policy as the agent shipper):
+      * Events are written to a disk queue BEFORE any send attempt.
+      * A queued batch is deleted only after the server confirms (2xx).
+      * Server down / timeout / 5xx / 429 -> the batch stays queued and is
+        retried on the next cycle. Nothing is lost to an outage.
+      * A permanent rejection (other 4xx, e.g. a wrong API key) parks the
+        batch in deadletter/ instead of retrying it forever.
+      * Session files left on disk by a previous run (the process died
+        before draining them) are replayed once at startup.
+      * The queue is size-capped; the oldest batches are dropped past the
+        cap so a long outage cannot fill the disk.
+    """
+
+    MAX_QUEUE_BYTES = 50 * 1024 * 1024
 
     def __init__(self, server: str, api_key: str, honeypot_id: str,
                  store: SessionStore, interval: float = 5.0):
@@ -362,30 +423,156 @@ class HoneypotShipper:
         self.honeypot_id = honeypot_id
         self.store = store
         self.interval = interval
+        self.queue_dir = store.spool_dir / "queue"
+        self.dead_dir = store.spool_dir / "deadletter"
+        self.queue_dir.mkdir(parents=True, exist_ok=True)
+        self.dead_dir.mkdir(parents=True, exist_ok=True)
+        self._seq = 0
+        self._replayed_ids: set = set()
         self._thread = threading.Thread(target=self._loop, daemon=True, name="hp-shipper")
         self._stop = threading.Event()
 
     def start(self):
+        self._replay_legacy_sessions()
         self._thread.start()
-        log.info("honeypot shipper started -> %s", self.server)
+        log.info("honeypot shipper started -> %s (queue: %s)", self.server, self.queue_dir)
 
     def stop(self):
         self._stop.set()
         self._thread.join(timeout=10)
 
+    # -- durable queue ---------------------------------------------------
+    def _enqueue(self, events: list[dict]):
+        if not events:
+            return
+        self._seq += 1
+        name = f"q-{int(time.time() * 1000)}-{os.getpid()}-{self._seq:06d}.jsonl"
+        tmp = self.queue_dir / (name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for ev in events:
+                f.write(json.dumps(ev) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.rename(self.queue_dir / name)
+        self._enforce_cap()
+
+    def _enforce_cap(self):
+        files = sorted(self.queue_dir.glob("q-*.jsonl"))
+        total = sum(f.stat().st_size for f in files)
+        dropped = 0
+        while total > self.MAX_QUEUE_BYTES and files:
+            victim = files.pop(0)
+            try:
+                total -= victim.stat().st_size
+                victim.unlink()
+                dropped += 1
+            except OSError:
+                break
+        if dropped:
+            log.warning("honeypot queue over cap: dropped %d oldest batch(es)", dropped)
+
+    def _replay_legacy_sessions(self):
+        """SessionStore spools every closed session to session-<id>.json as
+        a crash fallback. Files still on disk at startup belong to sessions
+        that were never drained (this process died first): convert them,
+        queue them, and remove the file so each ships exactly once. The
+        rename claims the file, so two shippers sharing a spool dir (SSH +
+        HTTP pots) cannot replay the same session twice."""
+        for path in sorted(self.store.spool_dir.glob("session-*.json")):
+            claimed = path.with_name(path.name + ".replay")
+            try:
+                path.rename(claimed)
+            except OSError:
+                continue
+            try:
+                sess = json.loads(claimed.read_text())
+                if sess.get("session_id"):
+                    self._replayed_ids.add(sess["session_id"])
+                events = self._to_events(sess)
+                if events:
+                    self._enqueue(events)
+                    log.info("replayed spooled session %s (%d events)",
+                             sess.get("session_id"), len(events))
+            except Exception as e:
+                log.warning("legacy session replay failed for %s: %s", path.name, e)
+                try:
+                    claimed.rename(self.dead_dir / claimed.name)
+                except OSError:
+                    pass
+                continue
+            claimed.unlink(missing_ok=True)
+
     def _loop(self):
         while not self._stop.is_set():
             try:
-                sessions = self.store.pop_closed()
-                if sessions:
-                    events = []
-                    for s in sessions:
-                        events.extend(self._to_events(s))
-                    if events:
-                        self._post(events)
+                for sess_dict in self.store.pop_closed():
+                    if sess_dict.get("session_id") in self._replayed_ids:
+                        # Already queued by the startup replay of its
+                        # crash-fallback file; ship exactly once.
+                        self._replayed_ids.discard(sess_dict.get("session_id"))
+                        continue
+                    self._enqueue(self._to_events(sess_dict))
+                    # The durable queue owns the session now; remove the
+                    # per-session crash-fallback file.
+                    try:
+                        (self.store.spool_dir /
+                         f"session-{sess_dict['session_id']}.json").unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                self._flush()
             except Exception:
                 log.exception("shipper loop error")
             self._stop.wait(self.interval)
+
+    def _flush(self):
+        for path in sorted(self.queue_dir.glob("q-*.jsonl"))[:20]:
+            claimed = path.with_name(path.name + ".sending")
+            try:
+                path.rename(claimed)
+            except OSError:
+                continue  # another shipper is flushing it
+            try:
+                events = [json.loads(l) for l in
+                          claimed.read_text().splitlines() if l.strip()]
+            except Exception:
+                claimed.rename(self.dead_dir / claimed.name)
+                continue
+            if not events:
+                claimed.unlink(missing_ok=True)
+                continue
+            status = self._post(events)
+            if status == "ok":
+                claimed.unlink(missing_ok=True)
+            elif status == "dead":
+                claimed.rename(self.dead_dir / claimed.name)
+                log.warning("honeypot batch permanently rejected; parked: %s",
+                            claimed.name)
+            else:  # retry on a later cycle; nothing is lost
+                claimed.rename(path)
+
+    def _post(self, events: list[dict]) -> str:
+        """'ok' = server confirmed; 'retry' = transient failure, keep the
+        batch; 'dead' = permanent rejection, park it in deadletter/."""
+        body = json.dumps({"events": events}).encode("utf-8")
+        req = urllib.request.Request(
+            self.server + "/api/v1/events", data=body,
+            headers={"Content-Type": "application/json", "X-API-Key": self.api_key},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read())
+            log.info("shipped %d honeypot events -> %s alerts",
+                     len(events), data.get("new_alerts", 0))
+            return "ok"
+        except urllib.error.HTTPError as e:
+            if e.code == 429 or e.code >= 500:
+                log.warning("honeypot ship deferred (HTTP %d); batch kept", e.code)
+                return "retry"
+            log.warning("honeypot ship rejected (HTTP %d)", e.code)
+            return "dead"
+        except Exception as e:
+            log.warning("honeypot ship failed (will retry): %s", e)
+            return "retry"
 
     def _to_events(self, sess: dict) -> list[dict]:
         """Turn one closed honeypot session into Argus event stream."""
@@ -518,20 +705,6 @@ class HoneypotShipper:
 
         return events
 
-    def _post(self, events: list[dict]):
-        body = json.dumps({"events": events}).encode("utf-8")
-        req = urllib.request.Request(
-            self.server + "/api/v1/events", data=body,
-            headers={"Content-Type": "application/json", "X-API-Key": self.api_key},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as r:
-                data = json.loads(r.read())
-            log.info("shipped %d honeypot events -> %s alerts", len(events), data.get("new_alerts", 0))
-        except Exception as e:
-            log.warning("honeypot ship failed: %s", e)
-
-
 # ---------------------------------------------------------------------------
 # SSH server (paramiko-based)
 # ---------------------------------------------------------------------------
@@ -560,6 +733,10 @@ class _SSHServerInterface(paramiko.ServerInterface if _HAS_PARAMIKO else object)
         self.sess = sess
         self.max_tries = max_tries
         self._tries = 0
+        self.exec_command = None       # set by check_channel_exec_request
+        self.shell_requested = False   # set by check_channel_shell_request
+        self.pty_requested = False     # set by check_channel_pty_request
+        self.term_size = (80, 24)
 
     def check_channel_request(self, kind, chanid):
         import paramiko
@@ -572,8 +749,11 @@ class _SSHServerInterface(paramiko.ServerInterface if _HAS_PARAMIKO else object)
         self._tries += 1
         success = (self._tries > self.max_tries)  # accept after N failures
         self.sess.add_attempt(username, password, success)
-        log.info("[%s] auth attempt %d: %s:%s -> %s",
-                 self.sess.id, self._tries, username, password,
+        # The password itself lives in the session record (the capture
+        # is the point of a honeypot); it does not belong in stdout /
+        # container logs, which get shipped to far more places.
+        log.info("[%s] auth attempt %d: %s:*** -> %s",
+                 self.sess.id, self._tries, username,
                  "success" if success else "failed")
         return paramiko.AUTH_SUCCESSFUL if success else paramiko.AUTH_FAILED
 
@@ -586,18 +766,291 @@ class _SSHServerInterface(paramiko.ServerInterface if _HAS_PARAMIKO else object)
         return "password"
 
     def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
+        self.pty_requested = True
+        self.term_size = (width, height)
+        return True
+
+    def check_channel_window_change_request(self, channel, width, height, pixelwidth, pixelheight):
+        self.term_size = (width, height)
         return True
 
     def check_channel_shell_request(self, channel):
+        self.shell_requested = True
         return True
 
     def check_channel_exec_request(self, channel, command):
+        self.exec_command = (command.decode("utf-8", errors="replace")
+                             if isinstance(command, bytes) else str(command))
         return True
+
+
+_SHELL_COMMANDS = ["whoami", "id", "pwd", "ls", "dir", "cd", "cat", "echo",
+                   "env", "printenv", "hostname", "uname", "wget", "curl",
+                   "python", "python3", "history", "clear", "exit",
+                   "logout", "quit"]
+
+
+def _hp_prompt(fs) -> bytes:
+    cwd = fs.pwd()
+    disp = "~" if cwd == "/root" else cwd
+    return f"root@ubuntu-server:{disp}# ".encode()
+
+
+def _hp_run_line(sess, emulator, line: str):
+    """Run one command through the emulator and record it on the session."""
+    output, category = emulator.run(line)
+    sess.add_command(line, output, category)
+    if category == "download":
+        for u in re.findall(r"https?://[^\s]+", line):
+            sess.add_download(u)
+    return output, category
+
+
+def _exec_once(chan, sess, emulator, command: str):
+    """Answer an SSH exec channel: run the command, send its output and an
+    exit status, close. (Exec requests used to be accepted and ignored, so
+    scripted clients hung — a classic honeypot fingerprint.)"""
+    output, _category = _hp_run_line(sess, emulator, command)
+    if output:
+        chan.sendall((output + "\n").encode())
+    try:
+        chan.send_exit_status(0)
+    except Exception:
+        pass
+    chan.close()
+
+
+def _line_mode_shell(chan, sess, emulator, fs):
+    """Shell without a PTY (bots and scripts): no echo, line-buffered."""
+    ts_str = datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+    chan.sendall(MOTD.format(ts=ts_str, ip=sess.src_ip).encode())
+    chan.sendall(_hp_prompt(fs))
+    buf = b""
+    while True:
+        try:
+            data = chan.recv(1024)
+        except Exception:
+            return
+        if not data:
+            return
+        buf += data
+        while b"\n" in buf:
+            raw, buf = buf.split(b"\n", 1)
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line:
+                chan.sendall(b"\r\n" + _hp_prompt(fs))
+                continue
+            output, category = _hp_run_line(sess, emulator, line)
+            chan.sendall(f"\r\n{output}\r\n".encode() if output else b"\r\n")
+            if category == "exit":
+                chan.sendall(b"logout\r\n")
+                return
+            chan.sendall(_hp_prompt(fs))
+
+
+def _interactive_shell(chan, sess, emulator, fs):
+    """A real terminal line discipline: server-side echo, backspace,
+    cursor movement, history recall, Ctrl+C/U/K/W/L/A/E and tab
+    completion. Scanners fingerprint honeypots on exactly these
+    behaviors; a shell where typing does not echo is not a shell."""
+    ts_str = datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+    chan.sendall(MOTD.format(ts=ts_str, ip=sess.src_ip).encode())
+    history: list = []
+    line: list = []
+    cur = 0
+    hist_idx = None
+    saved_line: list = []
+
+    def redraw():
+        out = b"\r\x1b[K" + _hp_prompt(fs) + "".join(line).encode()
+        back = len(line) - cur
+        if back:
+            out += f"\x1b[{back}D".encode()
+        chan.sendall(out)
+
+    def submit() -> bool:
+        nonlocal line, cur, hist_idx
+        cmd = "".join(line).strip()
+        chan.sendall(b"\r\n")
+        line, cur, hist_idx = [], 0, None
+        if not cmd:
+            chan.sendall(_hp_prompt(fs))
+            return False
+        history.append(cmd)
+        if cmd == "clear":
+            chan.sendall(b"\x1b[2J\x1b[H" + _hp_prompt(fs))
+            return False
+        if cmd == "history":
+            text = "\r\n".join(f"{i + 1:5d}  {h}" for i, h in enumerate(history))
+            chan.sendall(text.encode() + b"\r\n" + _hp_prompt(fs))
+            return False
+        output, category = _hp_run_line(sess, emulator, cmd)
+        if output:
+            chan.sendall(output.replace("\n", "\r\n").encode() + b"\r\n")
+        if category == "exit":
+            chan.sendall(b"logout\r\n")
+            return True
+        chan.sendall(_hp_prompt(fs))
+        return False
+
+    def complete():
+        nonlocal line, cur
+        text = "".join(line)
+        upto = text[:cur]
+        token = upto.rsplit(" ", 1)[-1] if " " in upto else upto
+        if not token:
+            chan.sendall(b"\a")
+            return
+        if " " not in upto:  # completing the command name
+            cands = [c for c in _SHELL_COMMANDS if c.startswith(token)]
+        else:                # completing a name in the fake filesystem
+            entries = fs._files.get(fs.pwd(), [])
+            cands = [e for e in entries if e.startswith(token)]
+        if len(cands) == 1:
+            ins = cands[0][len(token):] + (" " if " " not in upto else "")
+            for ch in ins:
+                line.insert(cur, ch)
+                cur += 1
+            redraw()
+        elif len(cands) > 1:
+            common = os.path.commonprefix(cands)
+            if len(common) > len(token):
+                for ch in common[len(token):]:
+                    line.insert(cur, ch)
+                    cur += 1
+                redraw()
+            else:
+                chan.sendall(b"\a")
+        else:
+            chan.sendall(b"\a")
+
+    chan.sendall(_hp_prompt(fs))
+    pending = b""
+    while True:
+        try:
+            data = chan.recv(1024)
+        except Exception:
+            return
+        if not data:
+            return
+        data = pending + data
+        pending = b""
+        i = 0
+        while i < len(data):
+            b = data[i]
+            if b == 0x1B:  # escape sequence (cursor keys etc.)
+                rest = data[i:]
+                m = re.match(rb"\x1b\[([0-9;]*)([~ABCDFH])", rest)
+                if not m:
+                    if re.match(rb"\x1b(\[[0-9;]*)?$", rest):
+                        pending = rest  # sequence split across packets
+                        i = len(data)
+                    else:
+                        i += 2          # unknown escape: swallow it
+                    continue
+                params = m.group(1).decode()
+                final = chr(m.group(2)[0])
+                i += m.end()
+                if final == "A" and history:            # Up: older history
+                    if hist_idx is None:
+                        saved_line = list(line)
+                        hist_idx = len(history) - 1
+                    elif hist_idx > 0:
+                        hist_idx -= 1
+                    line = list(history[hist_idx])
+                    cur = len(line)
+                    redraw()
+                elif final == "B" and hist_idx is not None:  # Down
+                    hist_idx += 1
+                    if hist_idx >= len(history):
+                        hist_idx = None
+                        line = list(saved_line)
+                    else:
+                        line = list(history[hist_idx])
+                    cur = len(line)
+                    redraw()
+                elif final == "C":                      # Right
+                    if cur < len(line):
+                        cur += 1
+                        redraw()
+                elif final == "D":                      # Left
+                    if cur > 0:
+                        cur -= 1
+                        redraw()
+                elif final == "H":
+                    cur = 0
+                    redraw()
+                elif final == "F":
+                    cur = len(line)
+                    redraw()
+                elif final == "~" and params == "3":    # Delete key
+                    if cur < len(line):
+                        del line[cur]
+                        redraw()
+                elif final == "~" and params in ("1", "7"):
+                    cur = 0
+                    redraw()
+                elif final == "~" and params in ("4", "8"):
+                    cur = len(line)
+                    redraw()
+                continue
+            if b in (0x0D, 0x0A):                       # Enter
+                if b == 0x0D and i + 1 < len(data) and data[i + 1] == 0x0A:
+                    i += 1
+                i += 1
+                if submit():
+                    return
+                continue
+            if b == 0x03:                               # Ctrl+C
+                line, cur, hist_idx = [], 0, None
+                chan.sendall(b"^C\r\n" + _hp_prompt(fs))
+            elif b == 0x04:                             # Ctrl+D
+                if not line:
+                    chan.sendall(b"logout\r\n")
+                    return
+                if cur < len(line):
+                    del line[cur]
+                    redraw()
+            elif b == 0x15:                             # Ctrl+U
+                line, cur = [], 0
+                redraw()
+            elif b == 0x0B:                             # Ctrl+K
+                line = line[:cur]
+                redraw()
+            elif b == 0x17:                             # Ctrl+W
+                while cur > 0 and line[cur - 1] == " ":
+                    del line[cur - 1]
+                    cur -= 1
+                while cur > 0 and line[cur - 1] != " ":
+                    del line[cur - 1]
+                    cur -= 1
+                redraw()
+            elif b == 0x01:                             # Ctrl+A
+                cur = 0
+                redraw()
+            elif b == 0x05:                             # Ctrl+E
+                cur = len(line)
+                redraw()
+            elif b == 0x0C:                             # Ctrl+L
+                chan.sendall(b"\x1b[2J\x1b[H")
+                redraw()
+            elif b in (0x7F, 0x08):                     # Backspace
+                if cur > 0:
+                    del line[cur - 1]
+                    cur -= 1
+                    redraw()
+            elif b == 0x09:                             # Tab
+                complete()
+            elif 0x20 <= b < 0x7F:                      # printable char
+                line.insert(cur, chr(b))
+                cur += 1
+                redraw()
+            i += 1
 
 
 def _handle_ssh_client_thread(sock, addr, store: SessionStore,
                                honeypot_id: str, host_key,
-                               max_login_tries: int):
+                               max_login_tries: int, limiter=None):
     """Threaded handler for one incoming SSH TCP connection.
 
     Runs paramiko directly on the raw socket — no asyncio shim needed,
@@ -612,52 +1065,38 @@ def _handle_ssh_client_thread(sock, addr, store: SessionStore,
     transport = None
     try:
         transport = paramiko.Transport(sock)
+        # Paramiko's default banner ("SSH-2.0-paramiko_x.y") fingerprints
+        # the honeypot instantly; present as a stock Ubuntu OpenSSH.
+        transport.local_version = "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10"
         transport.add_server_key(host_key)
         server_iface = _SSHServerInterface(sess, max_tries=max_login_tries)
         transport.start_server(server=server_iface)
 
-        chan = transport.accept(timeout=20)
-        if chan is None:
-            log.warning("[%s] no channel opened (client disconnected during auth)", sess.id)
-            return
-
-        # Send MOTD
-        ts_str = datetime.now().strftime("%a %b %d %H:%M:%S %Y")
-        chan.send(MOTD.format(ts=ts_str, ip=src_ip).encode())
-        chan.send(b"root@ubuntu-server:~# ")
-
-        buf = b""
+        # Serve channels until the client goes away: one connection can
+        # carry several exec channels (scripts, Ansible) or a shell.
+        first = True
         while transport.is_active():
-            try:
-                data = chan.recv(1024)
-            except Exception:
+            server_iface.exec_command = None
+            server_iface.shell_requested = False
+            server_iface.pty_requested = False
+            chan = transport.accept(timeout=20 if first else 5)
+            if chan is None:
+                if first:
+                    log.warning("[%s] no channel opened (client disconnected during auth)", sess.id)
                 break
-            if not data:
-                break
-            buf += data
-            while b"\n" in buf or b"\r" in buf:
-                nl = buf.find(b"\n")
-                cr = buf.find(b"\r")
-                idx = min(x for x in [nl, cr] if x >= 0)
-                line = buf[:idx].decode("utf-8", errors="replace").strip()
-                buf = buf[idx + 1:]
-                if not line:
-                    chan.send(b"\r\nroot@ubuntu-server:~# ")
-                    continue
-                output, category = emulator.run(line)
-                sess.add_command(line, output, category)
-                if output:
-                    chan.send(f"\r\n{output}\r\n".encode())
-                else:
-                    chan.send(b"\r\n")
-                if category == "exit":
-                    chan.send(b"logout\r\n")
-                    chan.close()
+            first = False
+            # The channel request (exec vs shell vs pty) lands just after
+            # the channel opens; give it a moment to answer the right one.
+            for _ in range(20):
+                if server_iface.exec_command is not None or server_iface.shell_requested:
                     break
-                if category == "download":
-                    for u in _re.findall(r"https?://[^\s]+", line):
-                        sess.add_download(u)
-                chan.send(b"root@ubuntu-server:~# ")
+                time.sleep(0.05)
+            if server_iface.exec_command is not None:
+                _exec_once(chan, sess, emulator, server_iface.exec_command)
+            elif server_iface.pty_requested:
+                _interactive_shell(chan, sess, emulator, fs)
+            else:
+                _line_mode_shell(chan, sess, emulator, fs)
 
     except Exception as e:
         log.warning("[%s] SSH handler error: %s", sess.id, e)
@@ -672,6 +1111,8 @@ def _handle_ssh_client_thread(sock, addr, store: SessionStore,
         except Exception:
             pass
         store.close_session(sess)
+        if limiter is not None:
+            limiter.release(addr[0])
 
 
 class SSHHoneypot:
@@ -701,6 +1142,7 @@ class SSHHoneypot:
         self.spool_dir = spool_dir
         self.max_login_tries = max_login_tries
 
+        self._limiter = _ConnLimiter()
         self.store = SessionStore(spool_dir)
         self.shipper = HoneypotShipper(sentinel_server, sentinel_api_key,
                                        honeypot_id, self.store)
@@ -725,10 +1167,17 @@ class SSHHoneypot:
             except Exception as e:
                 log.warning("SSH accept error: %s", e)
                 break
+            if not self._limiter.allow(addr[0]):
+                log.info("connection rate limit: dropping %s", addr[0])
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                continue
             t = threading.Thread(
                 target=_handle_ssh_client_thread,
                 args=(conn, addr, self.store, self.honeypot_id,
-                      self._host_key, self.max_login_tries),
+                      self._host_key, self.max_login_tries, self._limiter),
                 daemon=True,
             )
             t.start()
@@ -737,6 +1186,28 @@ class SSHHoneypot:
 # ---------------------------------------------------------------------------
 # HTTP Honeypot
 # ---------------------------------------------------------------------------
+
+async def _read_http_request(reader, cap: int = 65536) -> bytes:
+    """Read one HTTP request: headers, then the body per Content-Length,
+    bounded by cap. The old single read(4096) lost split headers and
+    every body past the first chunk."""
+    buf = b""
+    while b"\r\n\r\n" not in buf and len(buf) < cap:
+        chunk = await asyncio.wait_for(reader.read(8192), timeout=10)
+        if not chunk:
+            break
+        buf += chunk
+    head, _, rest = buf.partition(b"\r\n\r\n")
+    m = re.search(rb"content-length:\s*(\d+)", head.lower())
+    if m:
+        want = min(int(m.group(1)), cap - len(rest))
+        while len(rest) < want:
+            chunk = await asyncio.wait_for(reader.read(8192), timeout=5)
+            if not chunk:
+                break
+            rest += chunk
+    return head + b"\r\n\r\n" + rest
+
 
 class HTTPHoneypot:
     """
@@ -755,6 +1226,7 @@ class HTTPHoneypot:
         self.honeypot_id = honeypot_id
         self.sentinel_server = sentinel_server.rstrip("/")
         self.sentinel_api_key = sentinel_api_key
+        self._limiter = _ConnLimiter()
         self.store = SessionStore(spool_dir)
         self.shipper = HoneypotShipper(sentinel_server, sentinel_api_key,
                                        honeypot_id, self.store)
@@ -774,9 +1246,18 @@ class HTTPHoneypot:
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info("peername", ("0.0.0.0", 0))
         src_ip, src_port = addr[0], addr[1]
+        if not self._limiter.allow(src_ip):
+            try:
+                writer.write(b"HTTP/1.1 429 Too Many Requests\r\n"
+                             b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+                await writer.drain()
+                writer.close()
+            except Exception:
+                pass
+            return
         sess = self.store.new_session(src_ip, src_port, self.honeypot_id, "http")
         try:
-            data = await asyncio.wait_for(reader.read(4096), timeout=10)
+            data = await _read_http_request(reader)
             request = data.decode("utf-8", errors="replace")
             lines = request.split("\r\n")
             req_line = lines[0] if lines else ""
@@ -815,6 +1296,7 @@ class HTTPHoneypot:
             log.debug("[%s] HTTP error: %s", sess.id, e)
         finally:
             self.store.close_session(sess)
+            self._limiter.release(src_ip)
             try:
                 writer.close()
                 await writer.wait_closed()

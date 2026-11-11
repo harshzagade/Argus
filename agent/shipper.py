@@ -65,7 +65,16 @@ class Shipper:
             if not events:
                 _safe_unlink(path)
                 continue
-            if self._post(events):
+            # Post in chunks under the server's 5000-event batch cap: a
+            # spool file written during a long outage (or an attack
+            # burst) can hold far more, and posting it whole earned a
+            # 422 that dead-lettered the ENTIRE file - telemetry lost.
+            sent = True
+            for i in range(0, len(events), 4000):
+                if not self._post(events[i:i + 4000]):
+                    sent = False
+                    break
+            if sent:
                 _safe_unlink(path)
                 log.info("drained spool file %s (%d events)", path, len(events))
             else:

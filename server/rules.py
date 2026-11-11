@@ -45,7 +45,10 @@ def match_condition(event: dict, cond: dict) -> bool:
             if exp in str(actual or ""):
                 return False
         elif op == "regex":
-            if not re.search(str(exp), str(actual or "")):
+            # Cap the matched subject: a process cmdline can be ~1 MB
+            # of attacker text, and a nested-quantifier pattern on it
+            # is a CPU bomb. 8 KB is far beyond any real signature.
+            if not re.search(str(exp), str(actual or "")[:8192]):
                 return False
         elif op == "in":
             if actual not in (exp or []):
@@ -104,6 +107,29 @@ def render_template(tpl: str, event: dict) -> str:
     return TEMPLATE_RE.sub(repl, tpl or "")
 
 
+def _event_time(event):
+    """Thresholds, windows and cooldowns run on the EVENT's timestamp, not
+    on arrival time: a spooled backlog replayed after an outage carries old
+    timestamps and must not trip every threshold at once."""
+    ts = event.get("ts")
+    if ts:
+        try:
+            dt = datetime.fromisoformat(ts)
+            if not dt.tzinfo:
+                dt = dt.replace(tzinfo=timezone.utc)
+            # A client clock (or an attacker) must not steer detection
+            # state: far-future timestamps would pin cooldowns and hit
+            # windows open, ancient ones would never expire. Clamp to a
+            # sane band around server time.
+            now = datetime.now(timezone.utc)
+            if dt > now + timedelta(minutes=5) or dt < now - timedelta(days=7):
+                return now
+            return dt
+        except Exception:
+            pass
+    return datetime.now(timezone.utc)
+
+
 class RuleEngine:
     def __init__(self, rules_dir: str):
         self.rules_dir = Path(rules_dir)
@@ -133,7 +159,7 @@ class RuleEngine:
     def process(self, event: dict):
         """Evaluate one normalized event. Returns list of alert dicts (no id/ts)."""
         alerts = []
-        now = datetime.now(timezone.utc)
+        now = _event_time(event)
         for rule in self.rules:
             if rule.get("source") and rule["source"] != event.get("source"):
                 continue

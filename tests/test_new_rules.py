@@ -177,7 +177,7 @@ def test_hosts_file_positive():
         alerts = eng.process(_fim("/etc/hosts", action))
         assert len(alerts) == 1
         assert alerts[0]["rule_id"] == "ARG-1027"
-        assert alerts[0]["mitre"] == ["T1557"]
+        assert alerts[0]["mitre"] == ["T1565.001"]  # corrected mapping (was T1557)
 
 
 def test_hosts_file_negative():

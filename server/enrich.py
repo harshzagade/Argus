@@ -2,9 +2,9 @@
   1. Argus TI Platform — local IOC database, in-process first
   2. AbuseIPDB (if ABUSEIPDB_KEY is set)
   3. VirusTotal (if VT_KEY is set)
-  4. GreyNoise (always tried, free tier)
-  5. Deterministic offline mock fallback
-All results cached 24h in the kv table.
+  4. GreyNoise (only when ARGUS_GREYNOISE=1)
+If no source has data, the verdict is an honest "unknown" — Argus never
+invents a reputation. Real verdicts are cached 24h in the kv table.
 """
 import hashlib
 import ipaddress
@@ -20,49 +20,25 @@ HASH_RE = re.compile(r"^[a-fA-F0-9]{32}$|^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$")
 DOMAIN_RE = re.compile(r"^(?!-)[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63})+$")
 
 
-DEMO_BAD_PREFIXES = ("203.0.113.", "198.51.100.", "192.0.2.")
-
-
-def _is_demo_bad(v):
-    return v.startswith(DEMO_BAD_PREFIXES)
+# Networks that are never enrichment targets (internal/reserved space).
+_NON_PUBLIC_NETS = [
+    ipaddress.ip_network(n) for n in (
+        "0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16",
+        "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4",
+        "::1/128", "fe80::/10", "fc00::/7",
+    )
+]
 
 
 def _is_routable(v):
-    # Enrichable: anything not RFC1918/private, loopback, or multicast,
-    # plus our demo "known-bad" documentation ranges (treated as private
-    # by newer Python ipaddress versions, but we want intel on them).
+    # Enrichable = a real external address. Documentation ranges (e.g.
+    # 203.0.113.0/24) stay enrichable so the LOCAL TI database can still
+    # answer for them from real IOC rows; nothing is fabricated for them.
     try:
         ip = ipaddress.ip_address(v)
-        return _is_demo_bad(v) or not (ip.is_private or ip.is_loopback or ip.is_multicast)
     except ValueError:
         return False
-
-
-def _mock_ip(v):
-    # TEST-NET ranges are our demo "known bad"
-    if _is_demo_bad(v):
-        return {"type": "ip", "reputation": "malicious", "score": 95,
-                "sources": ["mock"], "note": "Known-bad demo infrastructure"}
-    h = int(hashlib.sha256(v.encode()).hexdigest(), 16) % 100
-    if h < 5:
-        return {"type": "ip", "reputation": "malicious", "score": 88, "sources": ["mock"]}
-    if h < 15:
-        return {"type": "ip", "reputation": "suspicious", "score": 55, "sources": ["mock"]}
-    return {"type": "ip", "reputation": "clean", "score": 5, "sources": ["mock"]}
-
-
-def _mock_domain(v):
-    h = int(hashlib.sha256(v.encode()).hexdigest(), 16) % 100
-    rep = "suspicious" if h < 10 else "clean"
-    return {"type": "domain", "reputation": rep, "score": 60 if rep != "clean" else 5,
-            "sources": ["mock"]}
-
-
-def _mock_hash(v):
-    h = int(hashlib.sha256(v.encode()).hexdigest(), 16) % 100
-    rep = "malicious" if h < 8 else "clean"
-    return {"type": "hash", "reputation": rep, "score": 90 if rep != "clean" else 2,
-            "sources": ["mock"]}
+    return not any(ip in net for net in _NON_PUBLIC_NETS)
 
 
 def _http_json(url, headers=None, timeout=5):
@@ -119,7 +95,7 @@ def _argus_ti(value: str, kind: str) -> dict | None:
     base_url = (os.environ.get("ARGUS_TI_URL") or os.environ.get("SENTINEL_TI_URL", "")).rstrip("/")
     if not base_url:
         return None
-    api_key = os.environ.get("SENTINEL_API_KEY", os.environ.get("ARGUS_API_KEY", "argus-dev-key"))
+    api_key = os.environ.get("ARGUS_API_KEY") or os.environ.get("SENTINEL_API_KEY", "argus-dev-key")
     try:
         body = json.dumps({"values": [value]}).encode("utf-8")
         req = urllib.request.Request(
@@ -220,13 +196,12 @@ def enrich(db, alert: dict) -> dict:
             out[name] = cached["intel"]
             continue
         intel = None
-        demo = os.environ.get("ARGUS_DEMO_INTEL", "") == "1"
         if kind == "ip":
-            intel = _argus_ti(v, "ip") or _abuseipdb(v) or _virustotal(v, True) or _greynoise(v) or (_mock_ip(v) if demo else None)
+            intel = _argus_ti(v, "ip") or _abuseipdb(v) or _virustotal(v, True) or _greynoise(v)
         elif kind == "domain":
-            intel = _argus_ti(v, "domain") or _virustotal(v, False) or (_mock_domain(v) if demo else None)
+            intel = _argus_ti(v, "domain") or _virustotal(v, False)
         else:
-            intel = _argus_ti(v, kind) or (_mock_hash(v) if demo else None)
+            intel = _argus_ti(v, kind)
         if intel is None:
             # Honest unknown: no source had data. Do NOT fabricate a verdict
             # and do NOT cache it for 24h — a real source may answer later.

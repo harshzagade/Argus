@@ -2,7 +2,7 @@
   name: SSH daemon configuration changed
   description: /etc/ssh/sshd_config was modified or created. Attackers weaken SSH hardening (e.g. PermitRootLogin yes, PasswordAuthentication yes) to guarantee re-entry to the host.
   severity: high
-  mitre: [T1021.004, T1562.004]
+  mitre: [T1556]
   compliance:
     pci_dss: ["11.5.1"]
     gdpr: ["Art.32"]

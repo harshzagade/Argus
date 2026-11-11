@@ -16,7 +16,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS iocs (
@@ -175,6 +175,60 @@ class ThreatIntelDB:
         )
         return iid
 
+    def bulk_upsert_iocs(self, rows: list[dict]) -> tuple[int, int]:
+        """Insert/update many IOCs in a single transaction.
+
+        Same end state as calling upsert_ioc per row, but with one commit
+        instead of one commit per row (the difference between seconds and
+        minutes on a large feed). Returns (added, updated).
+        """
+        added = updated = 0
+        now = _now()
+        with self._lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute("BEGIN")
+                for row in rows:
+                    ex = cur.execute(
+                        "SELECT id FROM iocs WHERE value=? AND type=?",
+                        (row["value"], row["type"])).fetchone()
+                    if ex:
+                        cur.execute(
+                            "UPDATE iocs SET score=?, reputation=?, confidence=?,"
+                            " source=?, last_seen=?, context_json=?, description=?,"
+                            " active=1 WHERE id=?",
+                            (row.get("score", 50), row.get("reputation", "unknown"),
+                             row.get("confidence", "medium"), row.get("source", "feed"),
+                             now, json.dumps(row.get("context", {})),
+                             row.get("description", ""), ex[0]))
+                        updated += 1
+                    else:
+                        cur.execute(
+                            "INSERT INTO iocs (id, type, value, score, reputation,"
+                            " confidence, source, first_seen, last_seen, expiry, tlp,"
+                            " tags_json, context_json, description, event_id)"
+                            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (uuid.uuid4().hex[:16], row["type"], row["value"],
+                             row.get("score", 50), row.get("reputation", "unknown"),
+                             row.get("confidence", "medium"), row.get("source", "feed"),
+                             now, now, None, "white", "[]",
+                             json.dumps(row.get("context", {})),
+                             row.get("description", ""), None))
+                        added += 1
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        return added, updated
+
+    def prune_feed_runs(self, days: int) -> int:
+        """Delete feed-run history older than `days` (retention)."""
+        if days <= 0:
+            return 0
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cur = self._exec("DELETE FROM feed_runs WHERE started < ?", (cutoff,))
+        return cur.rowcount
+
     def lookup(self, value: str) -> dict | None:
         """Look up a single value (any type). Returns the best match or None."""
         rows = self._query(
@@ -199,11 +253,30 @@ class ThreatIntelDB:
                 )
                 if rows:
                     return self._row(rows[0])
-            for r in self._query(
-                    "SELECT * FROM iocs WHERE type='url' AND active=1 ORDER BY score DESC", ()):
-                if urllib.parse.urlparse(r["value"]).hostname == host:
-                    return self._row(r)
+            for r in self._url_host_index().get(host, []):
+                return r
         return None
+
+    def _url_host_index(self) -> dict:
+        """Host -> URL IOC rows, built lazily and rebuilt when the URL
+        IOC count changes. lookup() used to scan and urlparse EVERY url
+        row on every miss (every unknown IP, every enrichment) - an
+        authenticated DoS and a drag on the hot path."""
+        n = self._query(
+            "SELECT COUNT(*) AS c FROM iocs WHERE type='url' AND active=1",
+            ())[0]["c"]
+        if getattr(self, "_uhi", None) is not None and self._uhi_count == n:
+            return self._uhi
+        idx: dict = {}
+        for r in self._query(
+                "SELECT * FROM iocs WHERE type='url' AND active=1 ORDER BY score DESC",
+                ()):
+            h = urllib.parse.urlparse(r["value"]).hostname
+            if h:
+                idx.setdefault(h.lower(), []).append(self._row(r))
+        self._uhi = idx
+        self._uhi_count = n
+        return idx
 
     def bulk_lookup(self, values: list[str]) -> dict[str, dict]:
         """Look up multiple values. Returns {value: ioc_dict}."""
@@ -451,8 +524,31 @@ class ThreatIntelDB:
         d["context"] = json.loads(d.get("context_json") or "{}")
         return d
 
+    def _ensure_feed_score_column(self):
+        try:
+            self._exec("ALTER TABLE feeds ADD COLUMN default_score INTEGER")
+        except Exception:
+            pass  # column already exists
+
     def _seed_default_feeds(self):
+        self._ensure_feed_score_column()
         """Register well-known public threat intel feeds."""
+        # Migrate installs whose stored feeds still point at retired URLs:
+        # abuse.ch ended anonymous URLhaus downloads (HTTP 410 Gone) and the
+        # MISP warninglists repo renamed microsoft-azure-us to microsoft-azure.
+        # Runs before the insert-missing pass so a migrated feed is not
+        # duplicated under its new name. Enabled/disabled state is untouched.
+        self._exec(
+            "UPDATE feeds SET name=?, url=?, ioc_type=NULL WHERE url IN (?,?,?)",
+            ("URLhaus Malicious Domains",
+             "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-domains.txt",
+             "https://urlhaus.abuse.ch/downloads/text/",
+             "https://urlhaus.abuse.ch/downloads/text_recent/",
+             "https://urlhaus.abuse.ch/downloads/csv_recent/"))
+        self._exec(
+            "UPDATE feeds SET url=? WHERE url=?",
+            ("https://raw.githubusercontent.com/MISP/misp-warninglists/main/lists/microsoft-azure/list.json",
+             "https://raw.githubusercontent.com/MISP/misp-warninglists/main/lists/microsoft-azure-us/list.json"))
         default_feeds = [
             {
                 "name": "Feodo Tracker C2",
@@ -461,10 +557,12 @@ class ThreatIntelDB:
                 "ioc_type": "ip",
             },
             {
-                "name": "URLhaus Malware URLs",
-                "url": "https://urlhaus.abuse.ch/downloads/text/",
+                # abuse.ch retired anonymous URLhaus downloads (HTTP 410);
+                # this community mirror republishes the same URLhaus data.
+                "name": "URLhaus Malicious Domains",
+                "url": "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-domains.txt",
                 "format": "txt",
-                "ioc_type": "url",
+                "ioc_type": None,
             },
             {
                 "name": "OpenPhish Phishing URLs",
@@ -480,7 +578,7 @@ class ThreatIntelDB:
             },
             {
                 "name": "MISP Warning Lists",
-                "url": "https://raw.githubusercontent.com/MISP/misp-warninglists/main/lists/microsoft-azure-us/list.json",
+                "url": "https://raw.githubusercontent.com/MISP/misp-warninglists/main/lists/microsoft-azure/list.json",
                 "format": "json",
                 "ioc_type": "cidr",
             },
@@ -491,3 +589,11 @@ class ThreatIntelDB:
             # silently re-enable one the operator disabled.
             if f["name"] not in existing:
                 self.upsert_feed(f["name"], f["url"], fmt=f["format"], ioc_type=f["ioc_type"])
+        # Curated malicious feeds carry a high-confidence default: their
+        # rows used to land at score 70 = "suspicious", under the 75
+        # "malicious" line, understating every verdict.
+        self._exec(
+            "UPDATE feeds SET default_score=85 WHERE default_score IS NULL"
+            " AND name IN ('Feodo Tracker C2', 'URLhaus Malicious Domains',"
+            " 'OpenPhish Phishing URLs', 'Emerging Threats Compromised IPs',"
+            " 'Blocklist.de All')")
