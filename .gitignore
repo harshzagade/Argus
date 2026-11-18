@@ -5,3 +5,8 @@ __pycache__/
 *.db-shm
 *.db-wal
 *.pyc
+.venv-desktop/
+build/
+dist/
+.honeypot-spool/
+.vscode/

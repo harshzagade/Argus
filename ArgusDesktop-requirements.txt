@@ -1,0 +1,5 @@
+# Desktop-app build requirements: everything Argus needs, plus the
+# embedded browser window (pywebview) and the exe packager (PyInstaller).
+-r requirements.txt
+pywebview>=5.0
+pyinstaller>=6.0

@@ -78,6 +78,15 @@ function debounce(fn, ms) {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
+/* Desktop launcher handoff: the desktop app opens the dashboard with
+   #api_key=... in the URL fragment, which the browser never sends to
+   the server. Pick it up once, then strip it from the address bar. */
+const launchKey = new URLSearchParams(location.hash.slice(1)).get('api_key');
+if (launchKey) {
+  localStorage.setItem('argus_api_key', launchKey);
+  history.replaceState(null, '', location.pathname + location.search);
+}
+
 /* ---------------- state ---------------- */
 const S = {
   key: localStorage.getItem('argus_api_key') || '',

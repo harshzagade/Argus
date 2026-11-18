@@ -1,0 +1,31 @@
+# Render blueprint for Argus (SIEM + threat intel, one web service).
+# Push to GitHub, connect the repo in Render, and deploy: Render reads the
+# entrypoint, health check, disk, and environment variables from this file.
+# Note: the persistent disk needs a paid Render plan, and Render asks for
+# a card before any deploy. Without the disk, SQLite data is lost on restart.
+services:
+  - type: web
+    name: argus
+    runtime: python
+    region: oregon
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server.argus_app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/argus/health
+    disk:
+      name: argus-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: ARGUS_API_KEY
+        generateValue: true
+      - key: ARGUS_DB
+        value: /data/argus.db
+      - key: ARGUS_TI_DB
+        value: /data/argus-ti.db
+      - key: ARGUS_TI_FEED_INTERVAL
+        value: "3600"
+      - key: ARGUS_RETENTION_DAYS
+        value: "30"
