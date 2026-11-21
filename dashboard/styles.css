@@ -376,6 +376,61 @@ body {
 .donut-center { font-family: var(--font); font-weight: 800; fill: var(--text); }
 .donut-sub { font-family: var(--font); font-weight: 700; fill: var(--faint); letter-spacing: 2px; }
 .donut-legend { display: flex; justify-content: center; gap: 14px; margin-top: 12px; flex-wrap: wrap; }
+
+.severity-total { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--text); margin: 4px 0 10px; }
+
+/* How serious: a four-axis kite (radar diamond) with the four severities at its corners */
+.sev-kite { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr); grid-template-areas: ". top ." "left kite right" ". bottom ."; align-items: center; justify-items: center; gap: 2px 4px; width: 100%; min-width: 0; }
+.kite-svg { grid-area: kite; display: block; width: 100%; max-width: 170px; height: auto; aspect-ratio: 1; overflow: visible; }
+.kite-guide { fill: none; stroke: var(--border-2); stroke-width: 1; stroke-dasharray: 3 4; }
+.kite-axis { fill: none; stroke: var(--border); stroke-width: 1; }
+.kite-shape { fill: color-mix(in srgb, var(--primary) 22%, transparent); stroke: var(--primary); stroke-width: 2; stroke-linejoin: round; }
+.kite-vertex { stroke: var(--surface); stroke-width: 2; transform-box: fill-box; transform-origin: center; transform: rotate(45deg); transition: transform .2s var(--ease); }
+.sev-kite[data-active="critical"] .kv-critical,
+.sev-kite[data-active="high"] .kv-high,
+.sev-kite[data-active="medium"] .kv-medium,
+.sev-kite[data-active="low"] .kv-low { transform: rotate(45deg) scale(1.5); }
+.sev-pt { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; max-width: 100%; padding: 8px 6px; border: 1px solid transparent; border-radius: var(--radius-s); background: transparent; color: var(--text); font-family: var(--font); text-align: center; cursor: pointer; transition: background .2s var(--ease), border-color .2s var(--ease); }
+.sev-pt:hover { background: var(--surface-2); border-color: var(--border); }
+.sev-pt:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.sev-pt-top { grid-area: top; }
+.sev-pt-right { grid-area: right; }
+.sev-pt-bottom { grid-area: bottom; }
+.sev-pt-left { grid-area: left; }
+.sev-pt-name { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }
+.sev-pt-key { display: block; flex: none; width: 7px; height: 7px; border-radius: 1.5px; background: var(--sev-c); transform: rotate(45deg); }
+.sev-pt-count { display: block; font-family: var(--mono); font-size: clamp(22px, 2.4vw, 30px); font-weight: 800; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.sev-pt-pct { display: block; color: var(--muted); font-family: var(--mono); font-size: 11px; font-weight: 600; }
+
+/* Alert activity: severity swimlanes with diamond markers */
+.chart-legend .legend-swatch { border-radius: 2px; transform: rotate(45deg); }
+#activityChart { width: 100%; min-width: 0; }
+.swim { display: grid; grid-template-columns: 78px minmax(0, 1fr); column-gap: 12px; width: 100%; min-width: 0; padding-top: 6px; }
+.swim-names { display: flex; flex-direction: column; }
+.swim-name { display: flex; align-items: center; gap: 7px; height: 46px; color: var(--text-2); font-size: 11px; font-weight: 600; text-transform: capitalize; white-space: nowrap; }
+.swim-key { display: block; flex: none; width: 7px; height: 7px; border-radius: 1.5px; transform: rotate(45deg); }
+
+.swim-plot { position: relative; min-width: 0; container-type: inline-size; }
+.swim-hits { position: absolute; inset: 0; }
+.swim-hit { position: absolute; top: 0; bottom: 0; border-radius: 4px; transition: background .15s var(--ease); }
+.swim-hit:hover { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.swim-lane { position: relative; height: 46px; pointer-events: none; }
+.swim-lane::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--border); }
+.swim-mark, .swim-empty { position: absolute; top: 50%; transform: translate(-50%, -50%) rotate(45deg); pointer-events: none; }
+.swim-mark { --sz: max(5px, calc(var(--f) * min(26px, 67cqw / var(--n)))); width: var(--sz); height: var(--sz); background: var(--sev); border-radius: 3px; box-shadow: 0 0 0 2px var(--surface), 0 0 10px color-mix(in srgb, var(--sev) 45%, transparent); }
+.swim-empty { width: 4px; height: 4px; border-radius: 1px; background: var(--border-2); }
+.swim-axis { grid-column: 2; position: relative; height: 16px; margin-top: 8px; }
+.swim-tick { position: absolute; top: 0; color: var(--muted); font-family: var(--mono); font-size: 10px; white-space: nowrap; transform: translateX(-50%); }
+.swim-tick.is-first { left: 0; transform: none; }
+.swim-tick.is-last { right: 0; left: auto; transform: none; }
+.swim-note { grid-column: 1 / -1; margin-top: 12px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+@media (max-width: 600px) {
+  .swim { grid-template-columns: 62px minmax(0, 1fr); column-gap: 8px; }
+  .swim-name { font-size: 10px; gap: 5px; }
+  .swim-tick { font-size: 9px; }
+  .sev-pt-name { font-size: 9.5px; letter-spacing: .3px; }
+}
+
 .legend-item { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); font-weight: 500; text-transform: capitalize; }
 .legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
 .legend-count { font-family: var(--mono); color: var(--text); font-weight: 700; }

@@ -270,26 +270,74 @@ async function ensureRules() {
 }
 
 /* ---------------- OVERVIEW ---------------- */
-function renderDonut(bySev) {
-  const total = SEV_ORDER.reduce((t, k) => t + (bySev[k] || 0), 0);
-  // 42x42 viewBox: circle r=15.9155 has circumference exactly 100,
-  // so dasharray percentages map 1:1 to arc fractions.
-  let offset = 25, circles = '';
-  for (const k of SEV_ORDER) {
-    const frac = total ? ((bySev[k] || 0) / total) * 100 : 0;
-    if (frac > 0.01) {
-      circles += `<circle cx="21" cy="21" r="15.9155" fill="none" stroke="${SEV_COLOR[k]}" ` +
-        `stroke-width="5" stroke-linecap="round" stroke-dasharray="${frac.toFixed(2)} 100" stroke-dashoffset="${offset.toFixed(2)}"/>`;
-    }
-    offset -= frac;
-  }
-  $('donutWrap').innerHTML =
-    `<svg viewBox="0 0 42 42" width="190" height="190" role="img" aria-label="${total} alerts">${circles}` +
-    `<text x="21" y="20.5" text-anchor="middle" class="donut-center" font-size="8.5">${total}</text>` +
-    `<text x="21" y="26.5" text-anchor="middle" class="donut-sub" font-size="3">ALERTS</text></svg>`;
-  $('donutLegend').innerHTML = SEV_ORDER.map((k) =>
-    `<span class="legend-item"><span class="legend-swatch" style="background:${SEV_COLOR[k]};color:${SEV_COLOR[k]}"></span>` +
-    `${k}<span class="legend-count">${bySev[k] || 0}</span></span>`).join('');
+/* Severity kite: four-axis diamond radar, one severity per corner. */
+function renderSeverityKite(bySev) {
+  const counts = {};
+  const total = SEV_ORDER.reduce((sum, key) => {
+    counts[key] = Math.max(0, Number(bySev[key]) || 0);
+    return sum + counts[key];
+  }, 0);
+  $('severityTotal').textContent = `${total} alerts in total`;
+
+  const R = 90;
+  const maxCount = Math.max(1, ...SEV_ORDER.map((k) => counts[k]));
+  const dir = { critical: [0, -1], high: [1, 0], medium: [0, 1], low: [-1, 0] };
+  const area = { critical: 'top', high: 'right', medium: 'bottom', low: 'left' };
+  const radius = (k) => R * (total ? 0.14 + 0.86 * (counts[k] / maxCount) : 0.14);
+  const pts = SEV_ORDER.map((k) => {
+    const r = radius(k);
+    return [dir[k][0] * r, dir[k][1] * r];
+  });
+  const poly = pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+  const guide = (f) => {
+    const r = (R * f).toFixed(1);
+    return `0,-${r} ${r},0 0,${r} -${r},0`;
+  };
+  const vertices = SEV_ORDER.map((k, i) =>
+    `<g transform="translate(${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)})">` +
+    `<rect class="kite-vertex kv-${k}" x="-6" y="-6" width="12" height="12" rx="2" fill="${SEV_COLOR[k]}"></rect></g>`
+  ).join('');
+
+  const svg = `
+    <svg class="kite-svg" viewBox="-108 -108 216 216" aria-hidden="true" focusable="false">
+      <polygon class="kite-guide" points="${guide(1)}"></polygon>
+      <polygon class="kite-guide" points="${guide(0.5)}"></polygon>
+      <path class="kite-axis" d="M0 -${R}V${R}M-${R} 0H${R}"></path>
+
+      <polygon class="kite-shape" points="${poly}"></polygon>
+      ${vertices}
+    </svg>`;
+
+  const buttons = SEV_ORDER.map((key) => {
+    const count = counts[key];
+    const pct = total ? (count / total) * 100 : 0;
+    const label = key.charAt(0).toUpperCase() + key.slice(1);
+    return `
+      <button type="button" class="sev-pt sev-pt-${area[key]}" data-severity="${key}"
+        style="--sev-c:${SEV_COLOR[key]}"
+        aria-label="${label}: ${count} alerts, ${pct.toFixed(1)} percent of total">
+        <span class="sev-pt-name"><span class="sev-pt-key"></span>${label}</span>
+        <span class="sev-pt-count">${count}</span>
+        <span class="sev-pt-pct">${pct.toFixed(1)}%</span>
+      </button>`;
+  }).join('');
+
+  const host = $('severityRows');
+  host.removeAttribute('data-active');
+  host.innerHTML = svg + buttons;
+  host.querySelectorAll('.sev-pt').forEach((btn) => {
+    const on = () => host.setAttribute('data-active', btn.dataset.severity);
+    const off = () => host.removeAttribute('data-active');
+    btn.addEventListener('pointerenter', on);
+    btn.addEventListener('pointerleave', off);
+    btn.addEventListener('focus', on);
+    btn.addEventListener('blur', off);
+    btn.addEventListener('click', () => {
+      $('alertSevFilter').value = btn.dataset.severity;
+      showView('alerts');
+    });
+
+  });
 }
 
 /* Animate stat numbers counting up from 0 on each overview load. */
@@ -326,7 +374,7 @@ async function loadOverview() {
   document.querySelectorAll('#statGrid .stat-card[data-goto]').forEach((el) =>
     el.addEventListener('click', () => showView(el.dataset.goto)));
 
-  renderDonut(kvList(stats.by_severity));
+  renderSeverityKite(kvList(stats.by_severity));
 
   const ruleEntries = Object.entries(kvList(stats.by_rule)).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const maxR = (ruleEntries[0] && ruleEntries[0][1]) || 1;
@@ -360,9 +408,9 @@ async function loadOverview() {
 }
 LOADERS.overview = loadOverview;
 
-/* Stacked area chart: alert volume stacked by severity.
-   days=1 -> hourly buckets (24h); otherwise daily buckets. Uses theme-aware
-   .chart-* classes so the dark theme can recolor gridlines and ticks. */
+/* Swimlane activity chart: one lane per severity, one diamond per bucket,
+   diamond size = alerts of that severity in that bucket.
+   days=1 -> 24 hourly buckets; otherwise daily buckets. */
 function renderActivityChart(alerts, days) {
   days = days || 14;
   const hourly = days === 1;
@@ -370,16 +418,29 @@ function renderActivityChart(alerts, days) {
   const now = new Date();
   const starts = [];
   if (hourly) {
-    const h = new Date(now); h.setMinutes(0, 0, 0);
-    for (let i = N - 1; i >= 0; i--) { const d = new Date(h); d.setHours(d.getHours() - i); starts.push(d); }
+    const h = new Date(now);
+    h.setMinutes(0, 0, 0);
+    for (let i = N - 1; i >= 0; i--) {
+      const d = new Date(h);
+      d.setHours(d.getHours() - i);
+      starts.push(d);
+    }
   } else {
-    const d0 = new Date(now); d0.setHours(0, 0, 0, 0);
-    for (let i = N - 1; i >= 0; i--) { const d = new Date(d0); d.setDate(d.getDate() - i); starts.push(d); }
+    const d0 = new Date(now);
+    d0.setHours(0, 0, 0, 0);
+    for (let i = N - 1; i >= 0; i--) {
+      const d = new Date(d0);
+      d.setDate(d.getDate() - i);
+      starts.push(d);
+    }
   }
   const spanMs = hourly ? 3600000 : 86400000;
-  const buckets = starts.map(() => ({ critical: 0, high: 0, medium: 0, low: 0 }));
+  const buckets = starts.map(() => ({
+    critical: 0, high: 0, medium: 0, low: 0
+  }));
   for (const a of (alerts || [])) {
     const t = new Date(a.ts);
+
     if (isNaN(t) || !(a.severity in buckets[0])) continue;
     const idx = Math.floor((t - starts[0]) / spanMs);
     if (idx >= 0 && idx < N) buckets[idx][a.severity]++;
@@ -387,42 +448,69 @@ function renderActivityChart(alerts, days) {
   const totals = buckets.map((b) => b.critical + b.high + b.medium + b.low);
   const grand = totals.reduce((s, v) => s + v, 0);
   const sevTotals = {};
-  for (const s of SEV_ORDER) sevTotals[s] = buckets.reduce((t, b) => t + b[s], 0);
+  for (const s of SEV_ORDER) {
+    sevTotals[s] = buckets.reduce((t, b) => t + b[s], 0);
+  }
   $('activityLegend').innerHTML = SEV_ORDER.map((s) =>
     `<span class="legend-item"><span class="legend-swatch" style="background:${SEV_COLOR[s]}"></span>` +
-    `${s}<span class="legend-count">${sevTotals[s]}</span></span>`).join('');
-  if (!grand) { $('activityChart').innerHTML = `<div class="empty">No alerts in the last ${hourly ? '24 hours' : days + ' days'}.</div>`; return; }
+    `${s}<span class="legend-count">${sevTotals[s]}</span></span>`
+  ).join('');
+  if (!grand) {
+    $('activityChart').innerHTML =
+      `<div class="empty">No alerts in the last ${hourly ? '24 hours' : days + ' days'}.</div>`;
+    return;
+  }
 
-  const W = 760, H = 290, L = 38, R = 14, T = 12, B = 30;
-  const iw = W - L - R, ih = H - T - B;
-  const maxV = Math.max(4, ...totals);
-  const X = (i) => L + ((i + 0.5) / N) * iw;
-  const Y = (v) => T + ih - (v / maxV) * ih;
-  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const label = (d) => hourly
     ? `${String(d.getHours()).padStart(2, '0')}:00`
     : `${d.getDate()} ${MON[d.getMonth()]}`;
-  const every = hourly ? 4 : (N > 20 ? 5 : N > 10 ? 2 : 1);
-  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Alert volume by severity">`;
-  for (let i = 0; i <= 4; i++) {
-    const v = Math.round(maxV * i / 4), yy = Y(v).toFixed(1);
-    svg += `<line class="chart-gridline" x1="${L}" y1="${yy}" x2="${W - R}" y2="${yy}"/>` +
-      `<text class="chart-tick" x="${L - 8}" y="${+yy + 4}" text-anchor="end">${v}</text>`;
-  }
-  starts.forEach((d, i) => {
-    if (i % every === 0) svg += `<text class="chart-xlabel" x="${X(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${label(d)}</text>`;
-  });
-  let cum = new Array(N).fill(0);
-  for (const sev of ['low', 'medium', 'high', 'critical']) {
-    const nc = buckets.map((b, i) => cum[i] + b[sev]);
-    const top = nc.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
-    const bot = cum.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).reverse().join(' ');
-    svg += `<polygon points="${top} ${bot}" fill="${SEV_COLOR[sev]}" fill-opacity="0.78"><title>${sev}: ${sevTotals[sev]}</title></polygon>`;
-    cum = nc;
-  }
-  svg += `<path class="chart-total-line" d="${cum.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')}" fill="none"/>`;
-  svg += '</svg>';
-  $('activityChart').innerHTML = svg;
+  const maxCell = Math.max(1, ...buckets.map((b) => Math.max(b.critical, b.high, b.medium, b.low)));
+  const maxTotal = Math.max(...totals);
+  const peakIdx = totals.indexOf(maxTotal);
+
+  const hits = buckets.map((bucket, i) => {
+    const breakdown = SEV_ORDER.filter((s) => bucket[s] > 0).map((s) => `${bucket[s]} ${s}`).join(', ');
+    const tip = `${label(starts[i])}: ${totals[i]} alerts` + (breakdown ? ` (${breakdown})` : '');
+    return `<div class="swim-hit" style="left:${(i / N * 100).toFixed(3)}%;width:${(100 / N).toFixed(3)}%"
+
+      role="img" aria-label="${tip}" title="${tip}"></div>`;
+  }).join('');
+
+  const lanes = SEV_ORDER.map((s) => {
+    const marks = buckets.map((bucket, i) => {
+      const v = bucket[s];
+      const left = ((i + 0.5) / N * 100).toFixed(3);
+      if (!v) return `<div class="swim-empty" style="left:${left}%"></div>`;
+      const f = (0.35 + 0.65 * Math.sqrt(v / maxCell)).toFixed(3);
+      return `<div class="swim-mark" style="left:${left}%;--f:${f};--sev:${SEV_COLOR[s]}"></div>`;
+    }).join('');
+    return `<div class="swim-lane">${marks}</div>`;
+  }).join('');
+
+  const names = SEV_ORDER.map((s) =>
+    `<div class="swim-name"><span class="swim-key" style="background:${SEV_COLOR[s]}"></span>${s}</div>`
+  ).join('');
+
+  const labelIndices = [...new Set([0, Math.floor((N - 1) / 3), Math.floor((N - 1) * 2 / 3), N - 1])];
+  const ticks = labelIndices.map((i, k) => {
+    if (k === 0) return `<span class="swim-tick is-first">${label(starts[i])}</span>`;
+    if (k === labelIndices.length - 1) return `<span class="swim-tick is-last">${label(starts[i])}</span>`;
+    return `<span class="swim-tick" style="left:${((i + 0.5) / N * 100).toFixed(3)}%">${label(starts[i])}</span>`;
+  }).join('');
+
+  $('activityChart').innerHTML = `
+    <div class="swim">
+      <div class="swim-names">${names}</div>
+      <div class="swim-plot" style="--n:${N}">
+        <div class="swim-hits">${hits}</div>
+        ${lanes}
+      </div>
+
+      <div class="swim-axis">${ticks}</div>
+      <div class="swim-note">Busiest ${hourly ? 'hour' : 'day'}: ${label(starts[peakIdx])} &middot; ${maxTotal} alerts. Diamond size shows alerts per severity; hover a time slot for its breakdown.</div>
+    </div>
+  `;
 }
 
 /* ---------------- ALERTS ---------------- */
@@ -1026,7 +1114,7 @@ function paintSkeletons(view) {
     if (view === 'overview') {
       $('statGrid').innerHTML = sk('sk-stat', 4);
       $('activityChart').innerHTML = '<div class="skeleton sk-panel"></div>';
-      $('donutWrap').innerHTML = ''; $('donutLegend').innerHTML = '';
+      $('severityRows').innerHTML = ''; $('severityTotal').textContent = '0 alerts in total';
       $('topRules').innerHTML = sk('sk-row', 6); $('topMitre').innerHTML = sk('sk-row', 6);
     } else if (view === 'alerts') {
       $('alertsBody').innerHTML = skRows(8);

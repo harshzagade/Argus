@@ -112,6 +112,13 @@
         </div>
         <div class="stat-grid" id="statGrid"></div>
         <div class="panel-grid overview-grid">
+          <div class="panel">
+            <div class="panel-head">
+              <div class="panel-title">How serious</div>
+            </div>
+            <div class="severity-total" id="severityTotal">0 alerts in total</div>
+            <div class="sev-kite" id="severityRows"></div>
+          </div>
           <div class="panel wide">
             <div class="panel-head chart-head">
               <div class="panel-title">Alert activity</div>
@@ -123,11 +130,6 @@
               </div>
             </div>
             <div id="activityChart"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-head"><div class="panel-title">How serious</div></div>
-            <div class="donut-wrap" id="donutWrap"></div>
-            <div class="donut-legend" id="donutLegend"></div>
           </div>
           <div class="panel">
             <div class="panel-head"><div class="panel-title">Top rules</div></div>
